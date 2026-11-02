@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-407c5481.js";
+            window.path_to_searchindex_js = "searchindex-5f5d5657.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -500,7 +500,11 @@ lives in the invoices dir would count the file itself (or its PDF) and skip a nu
 <li><code>date</code>: <code>YYYY-MM-DD</code>, default today. <code>due</code>: explicit date, else <code>date + due_days</code>
 (front matter <code>due_days</code>, else config <code>due_days</code>). <code>due: false</code> (or <code>due: none</code>)
 leaves the due date off the invoice.</li>
-<li><code>status</code>: <code>pending</code> (default), <code>paid</code>, <code>overdue</code>, <code>draft</code>; case-insensitive.</li>
+<li><code>status</code>: <code>pending</code> (default), <code>paid</code>, <code>overdue</code>, <code>draft</code>; case-insensitive.
+The PDF always shows the status as written. <code>invgen list</code> and the editor sidebar
+show an effective status instead: a <code>pending</code> invoice whose due date has passed
+shows as <code>overdue</code> with the days late (<code>overdue 12d</code>). Any other written status
+wins, and an invoice without a due date (<code>due: false</code>) is never overdue automatically.</li>
 <li><code>signature</code>: defaults to <code>from.name</code>; <code>false</code> hides it, a string replaces it.</li>
 <li><code>tax_label</code> defaults to <code>VAT</code>; <code>accent</code> defaults to <code>#111827</code> (<code>#rgb</code> or <code>#rrggbb</code>).</li>
 </ul>
@@ -563,11 +567,14 @@ clients:
     description: Senior Software Engineer
 </code></pre>
 <p>Sequence numbers are global and monotonically increasing across years
-(EINV-2025-13 is followed by EINV-2026-14). The next number scans <code>invoices_dir</code>
-(and up to two levels of subfolders) for <code>&lt;prefix&gt;-YYYY-N*.md</code> / <code>.pdf</code> files, with N
+(EINV-2025-13 is followed by EINV-2026-14). The next number scans the invoice
+library (see below) for <code>&lt;prefix&gt;-YYYY-N*.md</code> / <code>.pdf</code> files, with N
 padded or not (<code>EINV-2025-1</code>, <code>EINV-2025-02</code>), takes the highest N of any year plus one
 and formats it with at least two digits: <code>EINV-2026-01</code> for an empty directory.
 <code>~</code> in <code>invoices_dir</code> is expanded; the default is <code>~/Documents/Invoices</code>.</p>
+<p>The invoice library is <code>invoices_dir</code> plus up to two levels of subfolders
+(<code>Invoices/2026/</code>, <code>Invoices/clients/acme/</code>); hidden folders such as <code>.git</code> are
+skipped. <code>invgen list</code>, the editor sidebar and next-number scanning all use it.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="command-line"><a class="header" href="#command-line">Command line</a></h1>
 <pre><code class="language-text">invgen [--config PATH] [COMMAND]
