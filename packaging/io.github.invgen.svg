@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <title>invgen</title>
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#eef1f6"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#4338ca"/>
+    </linearGradient>
+    <linearGradient id="fold" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#c7cfdc"/>
+      <stop offset="1" stop-color="#e6eaf1"/>
+    </linearGradient>
+  </defs>
+
+  <!-- soft shadow -->
+  <path d="M60 26h102l50 50v150a16 16 0 0 1-16 16H60a16 16 0 0 1-16-16V42a16 16 0 0 1 16-16z"
+        fill="#0f172a" opacity="0.18" transform="translate(0 6)"/>
+
+  <!-- page with folded corner -->
+  <path d="M60 20h102l50 50v150a16 16 0 0 1-16 16H60a16 16 0 0 1-16-16V36a16 16 0 0 1 16-16z"
+        fill="url(#page)" stroke="#334155" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M162 20v34a16 16 0 0 0 16 16h34z" fill="url(#fold)" stroke="#334155"
+        stroke-width="6" stroke-linejoin="round"/>
+
+  <!-- header: bold accent bar -->
+  <rect x="70" y="52" width="68" height="20" rx="10" fill="url(#accent)"/>
+
+  <!-- line items -->
+  <rect x="70" y="100" width="116" height="12" rx="6" fill="#94a3b8"/>
+  <rect x="70" y="126" width="116" height="12" rx="6" fill="#94a3b8"/>
+  <rect x="70" y="152" width="76" height="12" rx="6" fill="#94a3b8"/>
+
+  <!-- total: the bold accent block -->
+  <rect x="100" y="182" width="86" height="38" rx="12" fill="url(#accent)"/>
+  <rect x="114" y="196" width="58" height="10" rx="5" fill="#ffffff"/>
+</svg>

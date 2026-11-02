@@ -1,0 +1,33 @@
+# invgen example configuration (fictional data; copy to ~/.config/invgen/config.yaml).
+# Static data lives here once; invoice files only say what changes.
+
+invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports .pdf
+number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
+currency: EUR
+tax_rate: 0
+due_days: 14
+
+from:
+  name: Alex Morgan
+  address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
+  tax:
+    - "VAT ID: LU12345678"
+    - "Tax ID: R.C.S. Luxembourg B000000 Business Permit 00000000/0"
+  email: alex@example.com
+  phone: "+352 600 000 000"
+
+payment:
+  holder: ALEX MORGAN
+  iban: DE89 3704 0044 0532 0130 00
+  bic: COBADEFFXXX
+
+clients:
+  northwind:
+    name: Northwind Labs SL
+    address: ["Calle Mayor, 12", Madrid, "28001", Spain]
+    tax: ["Tax ID: B12345678"]
+    currency: EUR
+    tax_rate: 0
+    rate: 450
+    unit: days
+    description: Senior Software Engineer

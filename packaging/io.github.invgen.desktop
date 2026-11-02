@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=invgen
+GenericName=Invoice Generator
+Comment=Write invoices in markdown and export beautiful PDFs
+Exec=invgen edit %f
+Icon=io.github.invgen
+Terminal=false
+MimeType=text/markdown;
+StartupWMClass=io.github.invgen
+Categories=Office;Finance;
+Keywords=invoice;pdf;markdown;billing;

@@ -1,0 +1,211 @@
+//! Background thread: parse + compile + rasterize, and PDF export.
+//! The UI only ever sends jobs and polls results, so it never blocks.
+
+use crate::config::Config;
+use crate::model::{Invoice, file_stem};
+use crate::parse::{ParseError, parse_invoice};
+use crate::render::{Compiled, PageImage, Renderer};
+use eframe::egui;
+use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
+
+pub enum Job {
+    Preview {
+        generation: u64,
+        text: String,
+        pixels_per_pt: f32,
+    },
+    /// Export `text` to `path`, or to `<number>.pdf` in `dir` when `path` is None.
+    Export {
+        text: String,
+        path: Option<PathBuf>,
+        dir: PathBuf,
+    },
+}
+
+pub enum Outcome {
+    /// Text failed to parse or compile; keep showing the last good pages.
+    Failed {
+        generation: u64,
+        line: usize,
+        message: String,
+    },
+    Preview {
+        generation: u64,
+        invoice: Box<Invoice>,
+        pixels_per_pt: f32,
+        pages: Vec<PageImage>,
+    },
+    Exported(Result<PathBuf, String>),
+    /// A preview job was dropped in favor of a newer one (no other outcome follows).
+    Skipped,
+}
+
+pub struct Worker {
+    tx: Sender<Job>,
+    rx: Receiver<Outcome>,
+}
+
+impl Worker {
+    pub fn spawn(cfg: Arc<Config>, ctx: egui::Context) -> Worker {
+        let (job_tx, job_rx) = channel::<Job>();
+        let (out_tx, out_rx) = channel::<Outcome>();
+        std::thread::Builder::new()
+            .name("invgen-render".into())
+            .spawn(move || run(cfg, ctx, job_rx, out_tx))
+            .expect("spawn render thread");
+        Worker {
+            tx: job_tx,
+            rx: out_rx,
+        }
+    }
+
+    pub fn send(&self, job: Job) {
+        let _ = self.tx.send(job);
+    }
+
+    pub fn poll(&self) -> Vec<Outcome> {
+        self.rx.try_iter().collect()
+    }
+}
+
+struct Cache {
+    text: String,
+    invoice: Invoice,
+    compiled: Compiled,
+}
+
+fn compile(
+    renderer: &Option<Renderer>,
+    cfg: &Config,
+    text: &str,
+) -> Result<(Invoice, Compiled), ParseError> {
+    // A bug in the parser or renderer must not take the preview down for good.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compile_inner(renderer, cfg, text)
+    }))
+    .unwrap_or_else(|_| {
+        Err(ParseError {
+            line: 0,
+            message: "internal error while rendering (see terminal)".into(),
+        })
+    })
+}
+
+fn compile_inner(
+    renderer: &Option<Renderer>,
+    cfg: &Config,
+    text: &str,
+) -> Result<(Invoice, Compiled), ParseError> {
+    let invoice = parse_invoice(text, cfg)?;
+    let renderer = renderer.as_ref().ok_or_else(|| ParseError {
+        line: 0,
+        message: "renderer failed to initialize".into(),
+    })?;
+    let compiled = renderer.compile(&invoice).map_err(|e| ParseError {
+        line: 0,
+        message: format!("render: {e:#}"),
+    })?;
+    Ok((invoice, compiled))
+}
+
+fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outcome>) {
+    let renderer = match std::panic::catch_unwind(Renderer::new)
+        .unwrap_or_else(|_| Err(anyhow::anyhow!("panicked during initialization")))
+    {
+        Ok(r) => Some(r),
+        Err(e) => {
+            let _ = tx.send(Outcome::Failed {
+                generation: 0,
+                line: 0,
+                message: format!("renderer: {e:#}"),
+            });
+            None
+        }
+    };
+    let mut cache: Option<Cache> = None;
+
+    while let Ok(first) = rx.recv() {
+        // Coalesce: run every export, but only the newest preview.
+        let mut jobs = vec![first];
+        loop {
+            match rx.try_recv() {
+                Ok(j) => jobs.push(j),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        }
+        let last_preview = jobs.iter().rposition(|j| matches!(j, Job::Preview { .. }));
+        for (i, job) in jobs.into_iter().enumerate() {
+            match job {
+                Job::Export { text, path, dir } => {
+                    let res = (|| -> Result<PathBuf, String> {
+                        let fresh;
+                        let (invoice, compiled) = match &cache {
+                            Some(c) if c.text == text => (&c.invoice, &c.compiled),
+                            _ => {
+                                fresh = compile(&renderer, &cfg, &text)
+                                    .map_err(|e| format!("line {}: {}", e.line, e.message))?;
+                                (&fresh.0, &fresh.1)
+                            }
+                        };
+                        let bytes = compiled.pdf().map_err(|e| format!("{e:#}"))?;
+                        let path = path.unwrap_or_else(|| {
+                            dir.join(format!("{}.pdf", file_stem(&invoice.number)))
+                        });
+                        if let Some(dir) = path.parent() {
+                            std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+                        }
+                        std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+                        Ok(path)
+                    })();
+                    let _ = tx.send(Outcome::Exported(res));
+                }
+                Job::Preview {
+                    generation,
+                    text,
+                    pixels_per_pt,
+                } => {
+                    if Some(i) != last_preview {
+                        let _ = tx.send(Outcome::Skipped);
+                        continue;
+                    }
+                    let hit = matches!(&cache, Some(c) if c.text == text);
+                    if !hit {
+                        match compile(&renderer, &cfg, &text) {
+                            Ok((invoice, compiled)) => {
+                                cache = Some(Cache {
+                                    text,
+                                    invoice,
+                                    compiled,
+                                })
+                            }
+                            Err(e) => {
+                                let _ = tx.send(Outcome::Failed {
+                                    generation,
+                                    line: e.line,
+                                    message: e.message,
+                                });
+                                ctx.request_repaint();
+                                continue;
+                            }
+                        }
+                    }
+                    let c = cache.as_ref().expect("cache filled above");
+                    let pages = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        c.compiled.render_pages(pixels_per_pt)
+                    }))
+                    .unwrap_or_default();
+                    let _ = tx.send(Outcome::Preview {
+                        generation,
+                        invoice: Box::new(c.invoice.clone()),
+                        pixels_per_pt,
+                        pages,
+                    });
+                }
+            }
+            ctx.request_repaint();
+        }
+    }
+}
