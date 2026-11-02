@@ -698,14 +698,14 @@ fn list_exports_csv() {
     let lines: Vec<&str> = csv.split_terminator("\r\n").collect();
     assert_eq!(
         lines[0],
-        "number,date,due,status,paid_on,client_key,client,currency,subtotal,tax,total,file"
+        "number,date,due,status,paid_on,client_key,client,currency,subtotal,tax,total,file,kind,refers_to"
     );
     assert_eq!(lines.len(), 4, "{csv}");
     let file = env.invoices().join("INV-2025-1.md");
     assert_eq!(
         lines[1],
         format!(
-            "INV-2025-1,2025-03-01,2025-03-15,paid,,northwind,Northwind Labs SL,EUR,201.00,0.00,201.00,{}",
+            "INV-2025-1,2025-03-01,2025-03-15,paid,,northwind,Northwind Labs SL,EUR,201.00,0.00,201.00,{},invoice,",
             file.display()
         )
     );
@@ -960,6 +960,143 @@ fn template_export_to_stdout_and_file() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("--export"));
+}
+
+// ---------------------------------------------------------------- credit notes
+
+#[test]
+fn new_credit_prefills_from_invoice_and_list_nets_it() {
+    let env = Env::with_config();
+    env.invoice("INV-2025-7.md", INVOICE);
+    env.invoice(
+        "INV-2025-8.md",
+        &INVOICE
+            .replace("INV-2025-7", "INV-2025-8")
+            .replace("2025-03-01", "2025-04-01"),
+    );
+    let out = env
+        .cmd()
+        .args(["new", "--credit", "INV-2025-7"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let path = PathBuf::from(stdout_of(&out).trim());
+    let year = chrono_year();
+    assert_eq!(path, env.invoices().join(format!("CN-{year}-01.md")));
+    let md = fs::read_to_string(&path).unwrap();
+    assert!(md.contains("kind: credit_note"), "{md}");
+    assert!(md.contains("refers_to: INV-2025-7"), "{md}");
+    assert!(md.contains("refers_to_date: 2025-03-01"), "{md}");
+    assert!(md.contains("client: northwind"), "{md}");
+    assert!(
+        md.contains("| Senior Software Engineer | 20 | days | 450.00 |"),
+        "{md}"
+    );
+
+    // Credit notes do not consume invoice numbers.
+    let out = env
+        .cmd()
+        .args(["new", "--client", "northwind"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        stdout_of(&out).contains(&format!("INV-{year}-09.md")),
+        "{out:?}"
+    );
+    fs::remove_file(stdout_of(&out).trim()).unwrap();
+
+    // Date the credit note in 2025 so the yearly total nets to one invoice.
+    fs::write(&path, md.replace(&format!("date: {year}-"), "date: 2025-")).unwrap();
+    let out = env.cmd().arg("list").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let list = stdout_of(&out);
+    assert!(list.contains("-9,000.00"), "{list}");
+    assert!(list.contains("credit note for INV-2025-7"), "{list}");
+    let total = list.lines().find(|l| l.contains("2025 total")).unwrap();
+    assert!(
+        total.contains("EUR 9,000.00") && !total.contains('-'),
+        "{list}"
+    );
+    // The credit note is listed after the invoices it follows by date.
+    let pos = |s: &str| list.find(s).unwrap();
+    assert!(pos("INV-2025-8") < pos(&format!("CN-{year}-01")), "{list}");
+
+    // It builds to a PDF that shows the negative total.
+    env.cmd()
+        .args(["build", path.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("EUR -9,000.00"));
+    assert!(is_pdf(&path.with_extension("pdf")));
+}
+
+#[test]
+fn new_credit_unknown_invoice_fails() {
+    let env = Env::with_config();
+    env.invoice("INV-2025-7.md", INVOICE);
+    env.cmd()
+        .args(["new", "--credit", "INV-2025-99"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no invoice `INV-2025-99`"));
+    env.cmd()
+        .args(["new", "--credit", "INV-2025-7", "--client", "northwind"])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn check_validates_credit_note_references_and_exports_carry_kind() {
+    let env = Env::with_config();
+    env.invoice("INV-2025-7.md", INVOICE);
+    let ok = "---\nkind: credit_note\nnumber: CN-2025-01\ndate: 2025-03-10\nrefers_to: INV-2025-7\nclient: northwind\n---\n- Work: 2 @ 450\n";
+    env.invoice("CN-2025-01.md", ok);
+    env.cmd()
+        .arg("check")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "2 invoice(s) checked, no problems",
+        ));
+    let out = env
+        .cmd()
+        .args(["list", "--format", "json"])
+        .output()
+        .unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(json[1]["kind"], "credit_note");
+    assert_eq!(json[1]["refers_to"], "INV-2025-7");
+    assert_eq!(json[1]["total"], "-900.00");
+
+    let bad = env.invoice(
+        "CN-2025-02.md",
+        &ok.replace("CN-2025-01", "CN-2025-02")
+            .replace("INV-2025-7", "INV-2025-99"),
+    );
+    env.cmd()
+        .arg("check")
+        .assert()
+        .code(1)
+        .stdout(predicate::str::contains(format!(
+            "{}:5: error: CN-2025-02 refers to INV-2025-99, which is not in the library",
+            bad.display()
+        )));
+}
+
+#[test]
+fn build_rejects_credit_note_without_reference() {
+    let env = Env::with_config();
+    let file = env.invoice(
+        "cn.md",
+        "---\nkind: credit_note\nclient: northwind\n---\n- A: 1 @ 1\n",
+    );
+    env.cmd()
+        .args(["build", file.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("cn.md:2:"))
+        .stderr(predicate::str::contains("refers_to"));
 }
 
 fn chrono_year() -> i32 {
