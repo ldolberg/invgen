@@ -63,3 +63,5 @@ one total line per currency:
 2026 total                                   EUR 32,250.90
 2026 total                                   GBP 7,600.00
 ```
+
+The outstanding balance below the table also has one line per currency.
