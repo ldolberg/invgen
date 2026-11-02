@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-a550ddff.js";
+            window.path_to_searchindex_js = "searchindex-13c6f741.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -208,6 +208,7 @@ number_prefix: EINV                  # numbers look like EINV-&lt;year&gt;-&lt;s
 currency: EUR                        # default currency code
 tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
+# tax_note: exempt                   # optional: legal tax mention under the totals
 language: en                         # labels: en, es, de, fr, it, pt, nl
 labels:                              # optional: replace single labels
   bill_to: Customer
@@ -235,6 +236,7 @@ clients:
     email: billing@example.com
     currency: EUR                    # optional per-client defaults
     tax_rate: 0
+    tax_note: reverse_charge         # optional: EU B2B services without VAT
     language: es                     # optional: this client's invoices in Spanish
     rate: 450                        # used by the new-invoice template
     unit: days
@@ -249,14 +251,15 @@ clients:
 <tr><td><code>invoices_dir</code></td><td><code>~/Documents/Invoices</code></td><td>Where <code>invgen new</code> and the editor create invoices, where <code>invgen list</code> and the editor sidebar look, and the folder scanned for the next number.</td></tr>
 <tr><td><code>number_prefix</code></td><td><code>EINV</code></td><td>Prefix of generated numbers. The starter file written by <code>invgen config</code> sets <code>INV</code>.</td></tr>
 <tr><td><code>currency</code></td><td><code>EUR</code></td><td>Currency code printed next to amounts. Any text works; invgen does not convert between currencies.</td></tr>
-<tr><td><code>tax_rate</code></td><td><code>0</code></td><td>Percent applied to the subtotal.</td></tr>
+<tr><td><code>tax_rate</code></td><td><code>0</code></td><td>Percent applied to the subtotal. Single lines can use another rate (a <code>Tax</code> column or <code>, tax 10%</code>), see <a href="https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#body-rules">FORMAT.md</a>.</td></tr>
+<tr><td><code>tax_note</code></td><td>none</td><td>Legal tax mention printed under the totals: <code>reverse_charge</code>, <code>exempt</code>, <code>outside_scope</code> (translated into the invoice language) or any free text. See <a href="#tax-notes">Tax notes</a>.</td></tr>
 <tr><td><code>due_days</code></td><td><code>14</code></td><td>Days from the invoice date to the due date.</td></tr>
 <tr><td><code>language</code></td><td><code>en</code></td><td>Language of every label on the invoice: <code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>it</code>, <code>pt</code>, <code>nl</code>. An unknown value is an error. Dates and amounts keep their format.</td></tr>
 <tr><td><code>labels</code></td><td>none</td><td>Map of label key to text, replacing single labels in any language (keys in <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels">TEMPLATES.md</a>).</td></tr>
 <tr><td><code>template</code></td><td>built-in</td><td>Path of a custom typst template. See <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</td></tr>
 <tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>, <code>logo</code> (SVG or PNG shown top-left; a missing file is an error).</td></tr>
 <tr><td><code>payment</code></td><td>empty</td><td><code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code> (list of lines).</td></tr>
-<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>language</code>, <code>rate</code>, <code>unit</code>, <code>description</code>.</td></tr>
+<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>rate</code>, <code>unit</code>, <code>description</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -265,7 +268,7 @@ value does not show up on the invoice, check the spelling first.</p>
 <p>Paths (<code>from.logo</code>, <code>template</code>) may start with <code>~</code>; relative paths are resolved
 against the folder of the config file.</p>
 <h2 id="precedence"><a class="header" href="#precedence">Precedence</a></h2>
-<p>For each invoice, <code>currency</code>, <code>tax_rate</code> and <code>language</code> are taken from the first place that
+<p>For each invoice, <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code> and <code>language</code> are taken from the first place that
 sets them:</p>
 <ol>
 <li>the invoice front matter,</li>
@@ -277,6 +280,28 @@ sets them:</p>
 <strong>Ctrl+N</strong> in the editor); they never change an existing invoice.</p>
 <p>An invoice can also override any config key for itself with a <code>config:</code> block.
 See <a href="recipes/overrides.html">Per-invoice overrides</a>.</p>
+<h2 id="tax-notes"><a class="header" href="#tax-notes">Tax notes</a></h2>
+<p>Invoices without VAT usually need a legal mention. <code>tax_note</code> prints one under the
+totals; the presets are translated into every supported language:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Preset</th><th>English text</th></tr>
+</thead>
+<tbody>
+<tr><td><code>reverse_charge</code></td><td>Reverse charge: VAT to be accounted for by the recipient (Article 196 of Council Directive 2006/112/EC).</td></tr>
+<tr><td><code>exempt</code></td><td>Exempt from VAT.</td></tr>
+<tr><td><code>outside_scope</code></td><td>Outside the scope of VAT.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Any other value is printed as written, and <code>tax_note: false</code> in an invoice drops the
+client or config note. To reword a preset, override its label (<code>tax_note_exempt</code>,
+for example) under <code>labels:</code>. These are standard wordings, not legal advice; check
+what your jurisdiction requires.</p>
+<p><code>invgen build</code> prints a warning (and the editor shows a notice after export) when an
+invoice charges no tax, has no <code>tax_note</code> and the client has <code>tax</code> lines. That is the
+typical cross-border B2B case that needs the reverse charge mention.</p>
 <h2 id="invoice-numbers"><a class="header" href="#invoice-numbers">Invoice numbers</a></h2>
 <p>Numbers have the shape <code>&lt;prefix&gt;-&lt;year&gt;-&lt;seq&gt;</code>, for example <code>EINV-2026-14</code>. The
 sequence is global: it keeps counting across years (<code>EINV-2025-13</code> is followed by
