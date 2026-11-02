@@ -81,6 +81,15 @@ The copy changes only what belongs to one invoice:
 
 Quantities are copied as they are, so check the number of days.
 
+## `invgen new --credit NUMBER [--open]`
+
+Creates the next credit note (`CN-<year>-<seq>`, see `credit_prefix`) reversing
+invoice `NUMBER`, prefilled with that invoice's front matter and items, and prints
+its path. `NUMBER` is found like for `invgen paid`: the full number, the bare
+sequence number or a file path. Crediting a credit note is an error. `--credit`
+cannot be combined with `--client` or `--from`. See
+[Correcting an invoice with a credit note](recipes/credit-notes.md).
+
 ## `invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]`
 
 Renders one invoice.
@@ -205,6 +214,12 @@ a due date count as not due yet. Drafts and paid invoices are not outstanding.
 | `--unpaid` | Only unpaid invoices, the same as `--status pending --status overdue`. |
 | `--format FORMAT` | `table` (default), `csv` or `json`. See [Export](#export). |
 
+Credit notes show a negative total and `credit note for <NUMBER>` after the
+status. They are placed by date among the invoices and subtracted from the yearly
+totals; an unpaid credit note lowers the outstanding balance in the age bucket of
+the invoice it refers to (or as not due yet when that invoice is paid or not
+shown).
+
 Filters combine: `invgen list --year 2026 --client northwind --unpaid` shows
 what Northwind still owes for 2026. The yearly totals and the outstanding
 balance only count the invoices shown.
@@ -248,7 +263,8 @@ Errors:
 - a higher number dated before a lower one (drafts are ignored here);
 - an invoice whose client has no name;
 - an issued invoice (with `issued_hash`) whose resolved content changed since it
-  was exported, see [`build`](#invgen-build-filemd--o-outpdf---png-dir---strict).
+  was exported, see [`build`](#invgen-build-filemd--o-outpdf---png-dir---strict);
+- a credit note whose `refers_to` is not an invoice in the library.
 
 Warnings:
 

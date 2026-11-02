@@ -156,6 +156,8 @@ about 7.9e28 is an error.
 * `issued_hash`: written by invgen when the invoice is first exported; see
   [Issued invoices](#issued-invoices-issued_hash). Do not write it by hand.
 * `sent_on`: `YYYY-MM-DD`, written by `invgen send --mark-sent`. Informational only.
+* `kind`: `invoice` (default) or `credit_note`; see [Credit notes](#credit-notes).
+  `refers_to` and `refers_to_date` are only allowed on credit notes.
 
 ## Issued invoices (`issued_hash`)
 
@@ -237,6 +239,55 @@ message is only handed to your mail client, and you press Send there.
 `--dry-run` prints the message and the command instead of running anything;
 `--mark-sent` records `sent_on: <today>` in the front matter after the mail client
 opened. The editor's **Send** button exports the PDF and then does the same.
+
+## Credit notes
+
+An issued invoice should not be edited or deleted; a correction goes through a
+credit note that references it and reverses all or part of it.
+
+```markdown
+---
+kind: credit_note
+number: CN-2026-01            # optional: auto = next number in the credit_prefix sequence
+date: 2026-11-02
+refers_to: EINV-2026-20       # required: the invoice this credit note reverses
+refers_to_date: 2026-10-01    # optional: looked up from the library when omitted
+status: pending
+client: northwind
+---
+
+| Description              | Qty | Unit | Rate   |
+|--------------------------|-----|------|--------|
+| Senior Software Engineer | 2   | days | 450.00 |
+```
+
+* **Amounts are written positive.** Write quantities and rates as on the invoice
+  (`2 days @ 450.00`); `kind: credit_note` makes the whole document count
+  negatively. Totals and rounding work exactly as for invoices (see
+  [Totals and rounding](#totals-and-rounding)), and the
+  result is then negated: the PDF shows each line total, the subtotal, the tax and
+  the total as negative amounts (`EUR -900.00`) while quantities and rates stay as
+  written. `invgen list` and its CSV/JSON export subtract the credit note from the
+  totals, so an invoice and its full credit note net to zero.
+* **Numbering**: credit notes have their own sequence with `credit_prefix` (config,
+  default `CN`): `CN-2026-01`, `CN-2026-02`... Invoices and credit notes never consume
+  each other's numbers. Keep the two prefixes different.
+* **Reference**: `refers_to` is required. The PDF is titled "Credit note" (translated
+  like every label) and shows "Refers to invoice EINV-2026-20 of October 1, 2026"
+  under the title. The date is `refers_to_date` when written, else the date of the
+  invoice with that number in the invoice library (matched against the front matter
+  `number:`, else the file name; its `date:` must be written). When neither is
+  found the line leaves the date out.
+* **Due date**: a credit note has none unless `due` or `due_days` is written in its
+  front matter (the config `due_days` does not apply), so it is never overdue.
+* `invgen check` reports a credit note whose `refers_to` is not an invoice in the
+  library.
+* `invgen new --credit EINV-2026-20` creates the next credit note in `invoices_dir`,
+  prefilled from that invoice: its front matter is copied except `number`, `date`,
+  `due`, `due_days`, `status`, `paid_on`, `issued_hash`, `sent_on`, `kind` and
+  `refers_to*`, which are replaced or removed, and its items and notes are copied as
+  written. Delete or reduce lines to credit only part of the invoice. Like an
+  invoice, a credit note is locked (`issued_hash`) when it is first exported.
 
 ## Branding and languages
 
@@ -381,6 +432,7 @@ An invalid override is reported at the `config:` line.
 ```yaml
 invoices_dir: ~/Documents/Invoices   # where `invgen new` puts .md and exports .pdf
 number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
+credit_prefix: CN                    # optional: credit notes, CN-<year>-<seq> (default CN)
 currency: EUR
 tax_rate: 0
 due_days: 14
@@ -430,6 +482,8 @@ library (see below) for `<prefix>-YYYY-N*.md` / `.pdf` files, with N
 padded or not (`EINV-2025-1`, `EINV-2025-02`), takes the highest N of any year plus one
 and formats it with at least two digits: `EINV-2026-01` for an empty directory.
 `~` in `invoices_dir` is expanded; the default is `~/Documents/Invoices`.
+Each prefix has its own sequence: credit notes count only `<credit_prefix>-...` files,
+so `CN-2026-03.md` does not advance the invoice numbers (and vice versa).
 
 The invoice library is `invoices_dir` plus up to two levels of subfolders
 (`Invoices/2026/`, `Invoices/clients/acme/`); hidden folders such as `.git` are
