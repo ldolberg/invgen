@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-43af503e.js";
+            window.path_to_searchindex_js = "../searchindex-ede46e89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-c6fff20e.js"></script>
@@ -230,11 +230,19 @@ the line <code>October 2026 period</code> under the heading is printed as that i
 detail.</p>
 <p>Prefer the terminal? Edit the file in any editor and run
 <code>invgen build ~/Documents/Invoices/EINV-2026-23.md</code>.</p>
-<h2 id="when-the-client-pays"><a class="header" href="#when-the-client-pays">When the client pays</a></h2>
-<p>Change the status in the front matter:</p>
-<pre><code class="language-yaml">status: paid
+<p>Next month, start from this invoice instead of the template, so extra rows and
+notes come along:</p>
+<pre><code class="language-sh">invgen new --from last --client northwind --open
 </code></pre>
-<p><code>invgen list</code> then shows the invoice as paid. invgen never changes the status on
+<p>The copy gets the next number, today’s date and <code>status: pending</code>, and
+<code>October 2026 period</code> becomes <code>November 2026 period</code>.</p>
+<h2 id="when-the-client-pays"><a class="header" href="#when-the-client-pays">When the client pays</a></h2>
+<pre><code class="language-sh">invgen paid EINV-2026-23            # or: invgen paid 23 --on 2026-11-20
+</code></pre>
+<p>This sets <code>status: paid</code> and <code>paid_on:</code> in the front matter and leaves the rest
+of the file as it was. In the editor, right-click the invoice in the sidebar and
+choose <strong>Mark as paid</strong>. <code>invgen list</code> then shows the invoice as paid with the
+date. invgen never changes the status on
 its own; mark late invoices <code>overdue</code> yourself if you want them to stand out in
 the list and on the PDF.</p>
 <h2 id="a-standing-note"><a class="header" href="#a-standing-note">A standing note</a></h2>

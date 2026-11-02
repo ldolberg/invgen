@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-43af503e.js";
+            window.path_to_searchindex_js = "searchindex-ede46e89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -235,6 +235,36 @@ number of weekdays of the previous month as the quantity.</li>
 </ul>
 <p>With no clients in the config, the template has an inline <code>to:</code> block to fill in
 instead.</p>
+<h2 id="invgen-new---from-numberlast---client-key---open"><a class="header" href="#invgen-new---from-numberlast---client-key---open"><code>invgen new --from NUMBER|last [--client KEY] [--open]</code></a></h2>
+<p>Duplicates an existing invoice for recurring work: the copy keeps the items
+table or list, the notes, the front matter overrides and your formatting, and
+gets the next free number. It is written to <code>invoices_dir</code> like <code>invgen new</code>
+and its path is printed.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Argument</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--from NUMBER</code></td><td>The invoice to copy: its number (<code>EINV-2026-23</code>), the bare sequence number (<code>23</code>), or a file path.</td></tr>
+<tr><td><code>--from last</code></td><td>The highest-numbered invoice in the library, or the highest one with <code>client: KEY</code> when <code>--client KEY</code> is given. <code>--client</code> only works together with <code>--from last</code>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The copy changes only what belongs to one invoice:</p>
+<ul>
+<li><code>number</code> is the next free number and <code>date</code> is today;</li>
+<li>an explicit <code>due:</code> date is removed, so the due date is computed again from
+<code>due_days</code> (<code>due: false</code> and <code>due_days</code> are kept);</li>
+<li><code>status</code> becomes <code>pending</code> and <code>paid_on</code> is removed;</li>
+<li>in the body, a month with its year (<code>October 2026</code>, <code>Oct 2026</code>) or a
+<code>YYYY-MM</code> period (<code>2026-10</code>) that refers to the source invoice’s month or the
+month before it moves forward by the number of months since the source date
+(at least one): <code>October 2026 period</code> becomes <code>November 2026 period</code>, and
+<code>December 2026</code> becomes <code>January 2027</code>. Full dates such as <code>2026-10-01</code> and
+other months are left alone.</li>
+</ul>
+<p>Quantities are copied as they are, so check the number of days.</p>
 <h2 id="invgen-build-filemd--o-outpdf---png-dir"><a class="header" href="#invgen-build-filemd--o-outpdf---png-dir"><code>invgen build FILE.md [-o OUT.pdf] [--png DIR]</code></a></h2>
 <p>Renders one invoice.</p>
 <div class="table-wrapper">
@@ -333,6 +363,28 @@ the invoice date;</li>
 <p>It exits with status 0 when there are no errors and 1 otherwise. Warnings alone
 do not fail, unless <code>--strict</code> is given. See the
 <a href="recipes/git.html#check-before-committing">pre-commit hook recipe</a>.</p>
+<h2 id="invgen-paid-filenumber---on-yyyy-mm-dd"><a class="header" href="#invgen-paid-filenumber---on-yyyy-mm-dd"><code>invgen paid FILE|NUMBER [--on YYYY-MM-DD]</code></a></h2>
+<p>Marks an invoice as paid: sets <code>status: paid</code> and <code>paid_on:</code> in its front
+matter. Only those lines change; comments, key order and the body stay byte for
+byte as they were (a missing front matter block is created).</p>
+<p><code>FILE|NUMBER</code> is a path, or an invoice number looked up in the invoice library:
+the full number (<code>EINV-2026-23</code>, matched against the front matter <code>number</code> and
+the file name) or the bare sequence number (<code>23</code>). No match, or more than one,
+is an error.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--on YYYY-MM-DD</code></td><td>The payment date. Default: the <code>paid_on</code> already in the file, else today.</td></tr>
+</tbody>
+</table>
+</div>
+<h2 id="invgen-status-filenumber-status"><a class="header" href="#invgen-status-filenumber-status"><code>invgen status FILE|NUMBER STATUS</code></a></h2>
+<p>Sets the written status to <code>pending</code>, <code>paid</code>, <code>overdue</code> or <code>draft</code>, editing only
+that line. <code>paid</code> works like <code>invgen paid</code> without <code>--on</code>; any other status
+removes <code>paid_on</code>.</p>
 <h2 id="invgen-config---edit"><a class="header" href="#invgen-config---edit"><code>invgen config [--edit]</code></a></h2>
 <p>Prints the path of the config file in use. If the file does not exist, it is
 created first with commented placeholders.</p>

@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-43af503e.js";
+            window.path_to_searchindex_js = "searchindex-ede46e89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -246,7 +246,12 @@ changes asks whether to <strong>Save</strong>, <strong>Discard</strong> or <stro
 <p>The sidebar lists the <code>.md</code> files directly inside <code>invoices_dir</code>, newest first,
 with number, client, total and a colored status. Hover an entry to see its path
 and date; click it to open it. Files that fail to parse are still listed, marked
-“could not parse”. The list refreshes when files in the folder change, including
+“could not parse”.</p>
+<p>Right-click an entry for <strong>Mark as paid</strong>, <strong>Set status</strong> (pending, paid,
+overdue, draft) and <strong>Duplicate</strong>. The status actions edit only the <code>status</code>
+and <code>paid_on</code> lines of the file; if that file is open with unsaved changes,
+nothing is written and a message asks you to save first. <strong>Duplicate</strong> works
+like <code>invgen new --from</code> and opens the new invoice. The list refreshes when files in the folder change, including
 changes made by other programs.</p>
 <p>Toggle the sidebar with Ctrl+B or the button in the top left corner.</p>
 <h2 id="files-changed-outside-the-editor"><a class="header" href="#files-changed-outside-the-editor">Files changed outside the editor</a></h2>

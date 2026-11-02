@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-43af503e.js";
+            window.path_to_searchindex_js = "searchindex-ede46e89.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -190,6 +190,7 @@ number: EINV-2026-23          # optional: auto = next number after the highest i
 date: 2026-11-02              # optional: defaults to today
 due: 2026-11-16               # optional: or `due_days: 14`, or `false` to hide it
 status: pending               # pending | paid | overdue | draft
+paid_on: 2026-11-20           # optional: when it was paid (`invgen paid` writes it)
 client: northwind       # key into config `clients:`  ...or an inline `to:` block
 currency: EUR                 # optional: falls back to client currency, then config default
 tax_rate: 0                   # percent; optional, falls back to client, then config
@@ -277,6 +278,10 @@ The PDF always shows the status as written. <code>invgen list</code> and the edi
 show an effective status instead: a <code>pending</code> invoice whose due date has passed
 shows as <code>overdue</code> with the days late (<code>overdue 12d</code>). Any other written status
 wins, and an invoice without a due date (<code>due: false</code>) is never overdue automatically.</li>
+<li><code>paid_on</code>: <code>YYYY-MM-DD</code>, the day the invoice was paid. Optional and not printed on
+the PDF; <code>invgen list</code> shows it next to a <code>paid</code> status (<code>paid 2026-11-20</code>).
+<code>invgen paid</code> sets <code>status: paid</code> and <code>paid_on</code> for you, and <code>invgen status</code>
+with any other status removes it. Both change only those front matter lines.</li>
 <li><code>signature</code>: defaults to <code>from.name</code>; <code>false</code> hides it, a string replaces it.</li>
 <li><code>tax_label</code> defaults to the <code>tax</code> label of the invoice language (<code>VAT</code>, <code>IVA</code>,
 <code>USt.</code>, <code>TVA</code>, <code>Btw</code>…); <code>accent</code> defaults to <code>#111827</code> (<code>#rgb</code> or <code>#rrggbb</code>).</li>
