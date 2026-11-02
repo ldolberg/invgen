@@ -1,0 +1,140 @@
+# Release on a version tag: push `vX.Y.Z` (matching Cargo.toml) and this
+#   1. tests the crate,
+#   2. builds the x86_64 Linux tarball,
+#   3. builds the Flatpak, signs it into the OSTree repo on gh-pages and pushes it
+#      (https://ldolberg.github.io/invgen/), plus a single-file .flatpak bundle,
+#   4. creates the GitHub release with both artifacts and their checksums.
+#
+# Manual runs (Actions > Release > Run workflow) are dry runs: everything is
+# built, nothing is pushed or released.
+#
+# Secret: FLATPAK_GPG_PRIVATE_KEY, the armored key from
+#   GNUPGHOME=~/.local/share/invgen/flatpak-gpg gpg --armor --export-secret-keys
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  APP_ID: io.github.ldolberg.invgen
+  CARGO_TERM_COLOR: always
+  PUBLISH: ${{ github.event_name == 'push' && '1' || '0' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: version
+        name: Tag matches Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match Cargo.toml version $version"
+            exit 1
+          fi
+          grep -q "<release version=\"$version\"" packaging/$APP_ID.metainfo.xml \
+            || { echo "::error::no <release version=\"$version\"> in metainfo.xml"; exit 1; }
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test --locked
+
+  tarball:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - run: make dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tarball
+          path: dist/*.tar.gz*
+
+  flatpak:
+    needs: check
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # push to gh-pages
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install flatpak-builder and the Flathub remote
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -yq flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+      - uses: actions/cache@v4
+        with:
+          path: .flatpak-builder
+          key: flatpak-builder-${{ hashFiles('packaging/flatpak/*') }}
+          restore-keys: flatpak-builder-
+      - name: Import signing key
+        env:
+          KEY: ${{ secrets.FLATPAK_GPG_PRIVATE_KEY }}
+        run: |
+          [ -n "$KEY" ] || { echo "::error::secret FLATPAK_GPG_PRIVATE_KEY is not set"; exit 1; }
+          export GNUPGHOME="$RUNNER_TEMP/gnupg"
+          mkdir -m 700 "$GNUPGHOME"
+          printf '%s\n' "$KEY" | gpg --batch --import
+          echo "FLATPAK_GPG_HOME=$GNUPGHOME" >> "$GITHUB_ENV"
+      - name: Build, sign and publish to gh-pages
+        env:
+          FLATPAK_BUILDER: flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse
+          PUBLISH_PUSH: ${{ env.PUBLISH }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          packaging/flatpak/publish.sh
+      - name: Bundle
+        run: |
+          mkdir -p dist
+          bundle=dist/invgen-v$VERSION-x86_64.flatpak
+          flatpak build-bundle build-pages/repo "$bundle" "$APP_ID" stable \
+            --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          (cd dist && sha256sum "$(basename "$bundle")" > "$(basename "$bundle").sha256")
+      - uses: actions/upload-artifact@v4
+        with:
+          name: flatpak
+          path: dist/*.flatpak*
+
+  release:
+    needs: [check, tarball, flatpak]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Release notes from metainfo.xml
+        run: |
+          python3 - "$VERSION" > notes.md <<'EOF'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse("packaging/io.github.ldolberg.invgen.metainfo.xml").getroot()
+          rel = root.find(f".//release[@version='{sys.argv[1]}']")
+          for el in rel.find("description"):
+              text = " ".join("".join(el.itertext()).split())
+              print(text if el.tag == "p" else "\n".join("- " + " ".join("".join(li.itertext()).split()) for li in el))
+              print()
+          print("Install with Flatpak:\n\n```sh\nflatpak install --user https://ldolberg.github.io/invgen/io.github.ldolberg.invgen.flatpakref\n```")
+          EOF
+          cat notes.md
+      - run: gh release create "$GITHUB_REF_NAME" dist/* --title "invgen $GITHUB_REF_NAME" --notes-file notes.md

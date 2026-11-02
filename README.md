@@ -96,6 +96,20 @@ any config key for a single invoice.
 | Ctrl+= / Ctrl+- | Zoom preview in / out |
 | Ctrl+0 | Reset zoom |
 
+## Releasing
+
+Bump `version` in `Cargo.toml`, add a `<release>` entry to
+`packaging/io.github.ldolberg.invgen.metainfo.xml` (and run `make flatpak-sources`
+if `Cargo.lock` changed), commit, then push a matching tag:
+
+```sh
+git tag v0.1.3 && git push origin v0.1.3
+```
+
+The Release workflow tests the crate, builds the tarball and the Flatpak, publishes
+the signed Flatpak repo to GitHub Pages and creates the GitHub release. Running it
+by hand from the Actions tab is a dry run.
+
 ## License
 
 MIT
