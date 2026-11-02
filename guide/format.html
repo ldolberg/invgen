@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-5f5d5657.js";
+            window.path_to_searchindex_js = "searchindex-38f9dde6.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -218,7 +218,9 @@ Description, quantity and rate columns are required. Fully empty rows are skippe
 or the unit cell is empty). Later tables are ignored.</li>
 <li><strong>Numbers</strong> accept <code>1,234.50</code> (<code>,</code> is only a thousands separator in groups of three,
 <code>.</code> is the decimal point; <code>1.234,50</code> is an error). A leading or trailing currency
-symbol/code is ignored: <code>EUR 450</code>, <code>€450</code>, <code>450 EUR</code>. Negative rates are allowed (discounts).</li>
+symbol/code is ignored: <code>EUR 450</code>, <code>€450</code>, <code>450 EUR</code>. Negative rates are allowed (discounts).
+Numbers are kept as exact decimals (no binary floating point), so <code>0.1</code> is exactly
+<code>0.1</code>. See <a href="#totals-and-rounding">Totals and rounding</a>.</li>
 <li><strong>List items</strong> are an alternative to a table, used only when the document has no table:
 <code>- Senior Software Engineer: 21 days @ 450</code> (<code>@</code> or <code>x</code>). A list is an items list
 when its first entry has that shape; then every entry must have it. The <code>detail</code> is the
@@ -237,11 +239,29 @@ and rules are ignored, so <code>&lt;!-- ... --&gt;</code> is a safe place for re
 <li>An invoice without items is an error. Errors carry the 1-based line in the whole
 file (front matter included).</li>
 </ul>
+<h2 id="totals-and-rounding"><a class="header" href="#totals-and-rounding">Totals and rounding</a></h2>
+<p>All amounts are computed with exact decimal arithmetic, and there is one rounding
+rule: <strong>round to cents, half away from zero</strong> (<code>1.005 -&gt; 1.01</code>, <code>-1.005 -&gt; -1.01</code>,
+<code>1.004 -&gt; 1.00</code>). It is applied in this order:</p>
+<ol>
+<li><strong>Line total</strong> = <code>quantity x rate</code>, rounded to cents.
+<code>7.5 hours @ 133.33</code> is <code>999.975</code>, shown as <code>999.98</code>.</li>
+<li><strong>Subtotal</strong> = the exact sum of the rounded line totals (no further rounding).</li>
+<li><strong>Tax</strong> = <code>subtotal x tax_rate / 100</code>, rounded to cents.
+<code>1,000.99</code> at <code>7.7%</code> is <code>77.07623</code>, shown as <code>77.08</code>.</li>
+<li><strong>Total</strong> = <code>subtotal + tax</code>.</li>
+</ol>
+<p>So the line totals shown on the invoice always add up to the subtotal, and subtotal
+plus tax always equals the total, to the cent. Rates and quantities with more than two
+decimals are used at full precision in step 1 and only displayed rounded (quantities
+show at most two decimals, trailing zeros dropped). An invoice whose amounts exceed
+about 7.9e28 is an error.</p>
 <h2 id="front-matter-resolution"><a class="header" href="#front-matter-resolution">Front matter resolution</a></h2>
 <ul>
 <li>No front matter at all is fine: everything takes its default. Unknown keys are ignored.</li>
 <li><code>currency</code>, <code>tax_rate</code>: front matter, then the client, then the config.
-<code>tax_rate</code> is a percent (<code>21</code> or <code>"21%"</code>).</li>
+<code>tax_rate</code> is a percent (<code>21</code>, <code>7.7</code> or <code>"21%"</code>); the same forms work for
+<code>tax_rate</code> and <code>rate</code> in the config.</li>
 <li><code>client:</code> must be a key of <code>clients:</code> in the config (the error lists the known ones).
 Without <code>client:</code> and without <code>to:</code>, the recipient is empty.</li>
 <li><code>number</code>: when absent, the next number from the invoices dir (see below). Prefer
