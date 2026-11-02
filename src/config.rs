@@ -1,11 +1,53 @@
 //! User configuration (~/.config/invgen/config.yaml). See docs/FORMAT.md.
 
-use crate::model::{Party, Payment};
+use crate::model::{Decimal, Party, Payment, num, round_cents};
 use anyhow::Context;
 use chrono::{Datelike, Local, Months, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Commented starter config written by `invgen config` and by the editor's
+/// first-run setup (which fills in the values and keeps the comments).
+pub const DEFAULT_CONFIG: &str = r#"# invgen configuration. See docs/FORMAT.md for the invoice format.
+# Static data lives here once; invoice files only say what changes.
+
+invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports .pdf
+number_prefix: INV                   # numbers look like INV-<year>-<seq>
+currency: EUR
+tax_rate: 0                          # percent
+due_days: 14
+# language: en                       # labels: en, es, de, fr, it, pt, nl
+# labels:                            # override single labels
+#   bill_to: Customer
+# template: my-invoice.typ           # custom typst template (`invgen template --export`)
+
+from:
+  name: Your Name
+  address: [Street 1, City, "00000", Country]
+  tax: ["VAT ID: XX00000000"]
+  email: you@example.com
+  # phone: "+00 000 000 000"
+  # logo: logo.svg                   # SVG or PNG; relative to this file
+
+payment:
+  holder: YOUR NAME
+  iban: XX00 0000 0000 0000 0000 00
+  bic: XXXXXXXXXXX
+  # notes: ["Bank name", "Please quote the invoice number"]
+
+clients:
+  acme:
+    name: ACME Corp
+    address: [Street 1, City, "00000", Country]
+    tax: ["Tax ID: X00000000"]
+    # currency: EUR      # optional per-client defaults
+    # tax_rate: 0
+    # language: es
+    rate: 450            # default rate used by `invgen new`
+    unit: days
+    description: Consulting services
+"#;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -13,10 +55,14 @@ pub struct ClientConfig {
     #[serde(flatten)]
     pub party: Party,
     pub currency: Option<String>,
-    pub tax_rate: Option<f64>,
-    pub rate: Option<f64>,
+    #[serde(with = "num::option")]
+    pub tax_rate: Option<Decimal>,
+    #[serde(with = "num::option")]
+    pub rate: Option<Decimal>,
     pub unit: Option<String>,
     pub description: Option<String>,
+    /// Label language for this client's invoices (overrides the config).
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,11 +71,24 @@ pub struct Config {
     pub invoices_dir: PathBuf,
     pub number_prefix: String,
     pub currency: String,
-    pub tax_rate: f64,
+    #[serde(with = "num")]
+    pub tax_rate: Decimal,
     pub due_days: i64,
     pub from: Party,
     pub payment: Payment,
     pub clients: BTreeMap<String, ClientConfig>,
+    /// Label language: en, es, de, fr, it, pt or nl.
+    pub language: String,
+    /// Overrides for single labels, e.g. `bill_to: Customer`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// Custom typst template replacing the built-in one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<PathBuf>,
+    /// Directory of the loaded config file; relative `from.logo` and
+    /// `template` paths resolve against it. Not part of the file.
+    #[serde(skip)]
+    pub dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -38,11 +97,15 @@ impl Default for Config {
             invoices_dir: expand_tilde(Path::new("~/Documents/Invoices")),
             number_prefix: "EINV".into(),
             currency: "EUR".into(),
-            tax_rate: 0.0,
+            tax_rate: Decimal::ZERO,
             due_days: 14,
             from: Party::default(),
             payment: Payment::default(),
             clients: BTreeMap::new(),
+            language: "en".into(),
+            labels: BTreeMap::new(),
+            template: None,
+            dir: None,
         }
     }
 }
@@ -69,7 +132,10 @@ impl Config {
         if path.exists() {
             Self::load_from(&path)
         } else {
-            Ok(Config::default())
+            Ok(Config {
+                dir: path.parent().map(Path::to_path_buf),
+                ..Config::default()
+            })
         }
     }
 
@@ -83,7 +149,36 @@ impl Config {
                 .with_context(|| format!("parsing config {}", path.display()))?
         };
         cfg.invoices_dir = expand_tilde(&cfg.invoices_dir);
+        cfg.dir = std::path::absolute(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .parent()
+            .map(Path::to_path_buf);
+        cfg.check_languages()
+            .with_context(|| format!("in config {}", path.display()))?;
         Ok(cfg)
+    }
+
+    /// Reject unknown `language` values (global and per client).
+    pub fn check_languages(&self) -> anyhow::Result<()> {
+        crate::render::i18n::normalize_language(&self.language)
+            .map_err(|e| anyhow::anyhow!("`language`: {e}"))?;
+        for (key, client) in &self.clients {
+            if let Some(lang) = &client.language {
+                crate::render::i18n::normalize_language(lang)
+                    .map_err(|e| anyhow::anyhow!("client `{key}`: `language`: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve a user-written path: expand `~`, then make a relative path
+    /// relative to the config file's directory (when known).
+    pub fn resolve_path(&self, path: &Path) -> PathBuf {
+        let p = expand_tilde(path);
+        match &self.dir {
+            Some(dir) if p.is_relative() => dir.join(p),
+            _ => p,
+        }
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
@@ -106,8 +201,12 @@ impl Config {
     /// Next invoice number by scanning invoices_dir for `<prefix>-<year>-<seq>.(md|pdf)`
     /// (also accepts unpadded seq like EINV-2025-1). Seq is global across years.
     pub fn next_number(&self, year: i32) -> String {
-        let mut max = 0u64;
-        scan_sequences(&self.invoices_dir, &self.number_prefix, 2, &mut max);
+        let max = crate::library::discover_with_extensions(&self.invoices_dir, &["md", "pdf"])
+            .iter()
+            .filter_map(|p| p.file_stem()?.to_str())
+            .filter_map(|s| sequence_of(s, &self.number_prefix))
+            .max()
+            .unwrap_or(0);
         format!(
             "{}-{}-{:02}",
             self.number_prefix,
@@ -120,6 +219,26 @@ impl Config {
     /// with one item prefilled from client defaults and "<Month YYYY> period" detail for the previous month.
     pub fn new_invoice_markdown(&self, client: Option<&str>) -> String {
         self.invoice_template(client, Local::now().date_naive())
+    }
+
+    /// Write the next invoice for `client` (see `new_invoice_markdown`) into
+    /// `invoices_dir` as `<number>.md` and return its path. Fails if that file
+    /// already exists. Used by `invgen new` and the editor.
+    pub fn write_new_invoice(&self, client: Option<&str>) -> anyhow::Result<PathBuf> {
+        let md = self.new_invoice_markdown(client);
+        let number = crate::parse::parse_invoice(&md, self)
+            .map(|inv| inv.number)
+            .unwrap_or_else(|_| self.next_number(Local::now().year()));
+        std::fs::create_dir_all(&self.invoices_dir)
+            .with_context(|| format!("creating {}", self.invoices_dir.display()))?;
+        let path = self
+            .invoices_dir
+            .join(format!("{}.md", crate::model::file_stem(&number)));
+        if path.exists() {
+            anyhow::bail!("{} already exists", path.display());
+        }
+        std::fs::write(&path, md).with_context(|| format!("writing {}", path.display()))?;
+        Ok(path)
     }
 
     /// `new_invoice_markdown` with an explicit "today", for deterministic output.
@@ -141,7 +260,7 @@ impl Config {
         let unit = defaults
             .and_then(|c| c.unit.clone())
             .unwrap_or_else(|| "days".into());
-        let rate = defaults.and_then(|c| c.rate).unwrap_or(0.0);
+        let rate = round_cents(defaults.and_then(|c| c.rate).unwrap_or_default());
         let currency = defaults
             .and_then(|c| c.currency.clone())
             .unwrap_or_else(|| self.currency.clone());
@@ -214,37 +333,6 @@ fn collapse_tilde(path: &Path) -> PathBuf {
     }
 }
 
-/// Collect the highest sequence number of `<prefix>-YYYY-N[...].(md|pdf)` files
-/// in `dir`, descending `depth` levels into subdirectories (e.g. per-year folders).
-fn scan_sequences(dir: &Path, prefix: &str, depth: u32, max: &mut u64) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth > 0 {
-                scan_sequences(&path, prefix, depth - 1, max);
-            }
-            continue;
-        }
-        let ext_ok = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("pdf"));
-        if !ext_ok {
-            continue;
-        }
-        if let Some(seq) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| sequence_of(s, prefix))
-        {
-            *max = (*max).max(seq);
-        }
-    }
-}
-
 /// `EINV-2025-02` -> Some(2). Trailing text after the digits is allowed
 /// (`EINV-2025-02-acme`), but the year must be exactly four digits.
 fn sequence_of(stem: &str, prefix: &str) -> Option<u64> {
@@ -285,7 +373,7 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.number_prefix, "EINV");
         assert_eq!(c.currency, "EUR");
-        assert_eq!(c.tax_rate, 0.0);
+        assert_eq!(c.tax_rate, Decimal::ZERO);
         assert_eq!(c.due_days, 14);
         assert!(c.invoices_dir.ends_with("Documents/Invoices"));
         assert!(!c.invoices_dir.starts_with("~"));
@@ -362,7 +450,7 @@ mod tests {
         assert_eq!(cfg.number_prefix, "INV");
         assert_eq!(cfg.currency, "EUR");
         assert_eq!(cfg.clients["acme"].party.name, "ACME");
-        assert_eq!(cfg.clients["acme"].rate, Some(100.0));
+        assert_eq!(cfg.clients["acme"].rate, Some(Decimal::from(100)));
 
         let out = dir.path().join("fresh/sub/config.yaml");
         cfg.save_to(&out).unwrap();
@@ -371,6 +459,21 @@ mod tests {
         let back = Config::load_from(&out).unwrap();
         assert_eq!(back.invoices_dir, cfg.invoices_dir);
         assert_eq!(back.clients["acme"].party.name, "ACME");
+        assert_eq!(back.clients["acme"].rate, Some(Decimal::from(100)));
+        assert_eq!(back.tax_rate, Decimal::ZERO);
+    }
+
+    #[test]
+    fn rates_accept_numbers_and_percent_strings() {
+        let cfg: Config = serde_yaml_ng::from_str(
+            "tax_rate: \"21%\"\nclients:\n  a:\n    tax_rate: 7.7\n    rate: \"1,234.50\"\n  b:\n    rate: null\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.tax_rate, Decimal::from(21));
+        assert_eq!(cfg.clients["a"].tax_rate, Some(Decimal::new(77, 1)));
+        assert_eq!(cfg.clients["a"].rate, Some(Decimal::new(123450, 2)));
+        assert_eq!(cfg.clients["b"].rate, None);
+        assert!(serde_yaml_ng::from_str::<Config>("tax_rate: lots").is_err());
     }
 
     #[test]
@@ -379,6 +482,50 @@ mod tests {
         let path = dir.path().join("config.yaml");
         std::fs::write(&path, "\n").unwrap();
         assert_eq!(Config::load_from(&path).unwrap().due_days, 14);
+    }
+
+    #[test]
+    fn branding_keys_load_and_resolve() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            "language: de\nlabels:\n  bill_to: Kunde\ntemplate: t.typ\nfrom:\n  name: Me\n  logo: logo.svg\nclients:\n  acme:\n    name: ACME\n    language: fr\n",
+        )
+        .unwrap();
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(cfg.language, "de");
+        assert_eq!(cfg.labels["bill_to"], "Kunde");
+        assert_eq!(cfg.clients["acme"].language.as_deref(), Some("fr"));
+        assert_eq!(cfg.dir.as_deref(), Some(dir.path()));
+        assert_eq!(
+            cfg.resolve_path(cfg.from.logo.as_deref().unwrap()),
+            dir.path().join("logo.svg")
+        );
+        assert_eq!(
+            cfg.resolve_path(Path::new("/abs.typ")),
+            Path::new("/abs.typ")
+        );
+        assert_eq!(cfg.resolve_path(Path::new("~/x")), home().join("x"));
+
+        // Defaults stay out of a saved config.
+        let out = dir.path().join("saved.yaml");
+        Config::default().save_to(&out).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(!text.contains("labels") && !text.contains("template") && !text.contains("logo"));
+        assert!(text.contains("language: en"), "{text}");
+    }
+
+    #[test]
+    fn unknown_language_in_config_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "language: xx\n").unwrap();
+        let err = format!("{:#}", Config::load_from(&path).unwrap_err());
+        assert!(err.contains("`xx`") && err.contains("en, es, de"), "{err}");
+        std::fs::write(&path, "clients:\n  acme:\n    language: yy\n").unwrap();
+        let err = format!("{:#}", Config::load_from(&path).unwrap_err());
+        assert!(err.contains("acme") && err.contains("`yy`"), "{err}");
     }
 
     #[test]
@@ -399,7 +546,7 @@ mod tests {
                     name: "ACME".into(),
                     ..Party::default()
                 },
-                rate: Some(450.0),
+                rate: Some(Decimal::new(45050, 2)),
                 unit: Some("days".into()),
                 description: Some("Senior Software Engineer".into()),
                 ..ClientConfig::default()
@@ -415,9 +562,9 @@ mod tests {
         assert_eq!(inv.items.len(), 1);
         let item = &inv.items[0];
         assert_eq!(item.description, "Senior Software Engineer");
-        assert_eq!(item.quantity, 22.0);
+        assert_eq!(item.quantity, Decimal::from(22));
         assert_eq!(item.unit, "days");
-        assert_eq!(item.rate, 450.0);
+        assert_eq!(item.rate, Decimal::new(45050, 2));
         assert_eq!(item.detail.as_deref(), Some("October 2026 period"));
         assert!(inv.notes.is_empty(), "{:?}", inv.notes);
         assert_eq!(inv.due, NaiveDate::from_ymd_opt(2026, 11, 16));

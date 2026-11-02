@@ -1,8 +1,11 @@
 //! Drawing: header, sidebar, editor, preview, status bar, toasts and dialogs.
 
+use super::library::Action;
 use super::theme::{self, Palette};
-use super::{App, Pending, ThemeChoice, ToastKind, highlight, open_external, tilde};
-use crate::model::{Status, format_date, format_money};
+use super::{
+    App, Pending, ThemeChoice, ToastKind, clients, highlight, onboarding, open_external, tilde,
+};
+use crate::model::{Status, format_date, format_money, status_display};
 use eframe::egui::{
     self, Align, Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Id, Layout,
     Margin, Pos2, Rect, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, UiBuilder, Vec2, pos2,
@@ -56,9 +59,35 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
         .frame(Frame::new().fill(p.bg))
         .show(ui, |ui| work_area(app, ui, &p));
 
+    clients_window(app, &ctx, &p);
     toasts(app, &ctx, &p);
     confirm_modal(app, &ctx, &p);
+    onboarding_modal(app, &ctx, &p);
     drop_overlay(&ctx, &p);
+}
+
+fn clients_window(app: &mut App, ctx: &egui::Context, p: &Palette) {
+    if !app.clients_open {
+        return;
+    }
+    let mut open = true;
+    let cfg = app.cfg.clone();
+    let path = tilde(&app.config_path);
+    let action = clients::show(&mut app.clients, &mut open, ctx, p, &cfg, &path);
+    app.clients_open = open;
+    if let Some(a) = action {
+        app.handle_clients(a);
+    }
+}
+
+fn onboarding_modal(app: &mut App, ctx: &egui::Context, p: &Palette) {
+    let path = tilde(&app.config_path);
+    let Some(form) = app.onboarding.as_mut() else {
+        return;
+    };
+    if let Some(outcome) = onboarding::show(form, ctx, p, &path) {
+        app.handle_onboarding(outcome);
+    }
 }
 
 // ------------------------------------------------------------------ header
@@ -134,12 +163,23 @@ fn header(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
             if ui.button("Open").on_hover_text("Ctrl+O").clicked() {
                 app.open_dialog();
             }
+            ui.spacing_mut().item_spacing.x = 2.0;
+            new_menu(app, ui, p);
             if ui
                 .button("New")
                 .on_hover_text("Ctrl+N: new invoice with the next number")
                 .clicked()
             {
-                app.request(Pending::New);
+                app.request(Pending::New(None));
+            }
+            ui.spacing_mut().item_spacing.x = 6.0;
+            ui.add_space(6.0);
+            if ui
+                .button("Clients")
+                .on_hover_text("Add, edit and delete clients")
+                .clicked()
+            {
+                app.open_clients();
             }
             ui.add_space(12.0);
 
@@ -148,6 +188,49 @@ fn header(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
             });
         });
     });
+}
+
+/// The arrow next to "New": pick the client for the new invoice.
+fn new_menu(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
+    let mut pick = None;
+    let mut manage = false;
+    ui.menu_button("\u{25BE}", |ui| {
+        ui.set_min_width(220.0);
+        ui.label(
+            RichText::new("NEW INVOICE FOR")
+                .font(theme::strong(10.5))
+                .color(p.text_weak),
+        );
+        if app.cfg.clients.is_empty() {
+            ui.label(RichText::new("No clients yet").color(p.text_weak));
+        }
+        for (key, c) in &app.cfg.clients {
+            let name = if c.party.name.is_empty() {
+                key.clone()
+            } else {
+                c.party.name.clone()
+            };
+            if ui
+                .button(name)
+                .on_hover_text(format!("client: {key}"))
+                .clicked()
+            {
+                pick = Some(key.clone());
+            }
+        }
+        ui.separator();
+        if ui.button("Manage clients...").clicked() {
+            manage = true;
+        }
+    })
+    .response
+    .on_hover_text("New invoice for a specific client");
+    if let Some(key) = pick {
+        app.request(Pending::New(Some(key)));
+    }
+    if manage {
+        app.open_clients();
+    }
 }
 
 fn header_info(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
@@ -311,6 +394,7 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
 
     let current = app.path.clone();
     let mut clicked = None;
+    let mut action = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -354,8 +438,12 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                 painter.galley(inner.left_top(), num, p.text_strong);
                 // Bottom row: client and status pill.
                 let (color, label) = status_colors(p, e.status);
+                let label = match (e.status, e.days_overdue) {
+                    (Some(s), Some(n)) => status_display(s, Some(n)),
+                    _ => label.to_string(),
+                };
                 let galley = painter.layout_no_wrap(
-                    label.to_string(),
+                    label,
                     FontId::new(9.5, FontFamily::Name(theme::STRONG.into())),
                     color,
                 );
@@ -386,16 +474,59 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                     if let Some(d) = e.date {
                         ui.label(RichText::new(format_date(d)).color(p.text_weak));
                     }
+                    if let Some(d) = e.paid_on {
+                        ui.label(
+                            RichText::new(format!("Paid {}", format_date(d))).color(p.text_weak),
+                        );
+                    }
                 });
                 if resp.clicked() && !selected {
                     clicked = Some(e.path.clone());
                 }
+                resp.context_menu(|ui| {
+                    if let Some(a) = sidebar_menu(ui, e.status) {
+                        action = Some((e.path.clone(), a));
+                        ui.close();
+                    }
+                });
                 resp.on_hover_cursor(CursorIcon::PointingHand);
             }
         });
     if let Some(path) = clicked {
         app.request(Pending::Open(path));
     }
+    if let Some((path, a)) = action {
+        app.library_action(path, a);
+    }
+}
+
+/// Right-click menu of a sidebar entry; `status` is the effective one.
+fn sidebar_menu(ui: &mut egui::Ui, status: Option<Status>) -> Option<Action> {
+    let mut picked = None;
+    let paid = status == Some(Status::Paid);
+    if ui
+        .add_enabled(!paid, egui::Button::new("Mark as paid"))
+        .clicked()
+    {
+        picked = Some(Action::SetStatus(Status::Paid));
+    }
+    ui.menu_button("Set status", |ui| {
+        for s in [
+            Status::Pending,
+            Status::Paid,
+            Status::Overdue,
+            Status::Draft,
+        ] {
+            if ui.button(s.label()).clicked() {
+                picked = Some(Action::SetStatus(s));
+            }
+        }
+    });
+    ui.separator();
+    if ui.button("Duplicate").clicked() {
+        picked = Some(Action::Duplicate);
+    }
+    picked
 }
 
 /// Single line galley cut with an ellipsis to `max_w`.
@@ -902,7 +1033,7 @@ fn confirm_modal(app: &mut App, ctx: &egui::Context, p: &Palette) {
         return;
     };
     let verb = match &action {
-        Pending::New => "creating a new invoice",
+        Pending::New(_) => "creating a new invoice",
         Pending::Open(_) => "opening another file",
         Pending::Close => "closing",
     };

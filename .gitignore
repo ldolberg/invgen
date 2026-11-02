@@ -6,6 +6,7 @@
 /build-flatpak-repo
 /.flatpak-builder
 /build-pages
+/guide/book
 
 # cargo-fuzz: only the seed corpus is committed
 /fuzz/target

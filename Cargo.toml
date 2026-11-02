@@ -8,7 +8,23 @@ repository = "https://github.com/ldolberg/invgen"
 readme = "README.md"
 keywords = ["invoice", "pdf", "markdown", "typst"]
 categories = ["command-line-utilities", "gui"]
-exclude = ["/fuzz"]
+homepage = "https://github.com/ldolberg/invgen"
+rust-version = "1.95"
+# Only what `cargo install` needs: sources, the Typst template and fonts (embedded
+# with include_bytes!), the examples and the format spec. Packaging, CI and the
+# README screenshots stay out of the crate.
+include = [
+    "/src/**/*.rs",
+    "/assets/invoice.typ",
+    "/assets/icon.png",
+    "/assets/fonts/*",
+    "/examples/**/*",
+    "/docs/FORMAT.md",
+    "/README.md",
+    "/LICENSE",
+    "/Cargo.toml",
+    "/Cargo.lock",
+]
 
 [dependencies]
 anyhow = "1.0.104"
@@ -21,6 +37,7 @@ image = { version = "0.25.10", default-features = false, features = ["png"] }
 notify = "8.2.1"
 pulldown-cmark = "0.13.6"
 rfd = "0.17.2"
+rust_decimal = "1.43.0"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 serde_yaml_ng = "0.10.0"
@@ -32,5 +49,7 @@ typst-pdf = "0.15.1"
 typst-render = "0.15.1"
 
 [dev-dependencies]
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
 proptest = "1.12.0"
 tempfile = "3.27.0"

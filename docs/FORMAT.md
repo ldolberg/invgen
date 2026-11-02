@@ -10,11 +10,14 @@ number: EINV-2026-23          # optional: auto = next number after the highest i
 date: 2026-11-02              # optional: defaults to today
 due: 2026-11-16               # optional: or `due_days: 14`, or `false` to hide it
 status: pending               # pending | paid | overdue | draft
+paid_on: 2026-11-20           # optional: when it was paid (`invgen paid` writes it)
 client: northwind       # key into config `clients:`  ...or an inline `to:` block
 currency: EUR                 # optional: falls back to client currency, then config default
 tax_rate: 0                   # percent; optional, falls back to client, then config
-tax_label: VAT                # optional
+tax_label: VAT                # optional: defaults to the translated "VAT" label
 accent: "#111827"             # optional
+language: en                  # optional: en, es, de, fr, it, pt, nl
+template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
 ---
 
 # Senior Software Engineer
@@ -40,6 +43,8 @@ Any other paragraph becomes a note under the table.
 * **Numbers** accept `1,234.50` (`,` is only a thousands separator in groups of three,
   `.` is the decimal point; `1.234,50` is an error). A leading or trailing currency
   symbol/code is ignored: `EUR 450`, `€450`, `450 EUR`. Negative rates are allowed (discounts).
+  Numbers are kept as exact decimals (no binary floating point), so `0.1` is exactly
+  `0.1`. See [Totals and rounding](#totals-and-rounding).
 * **List items** are an alternative to a table, used only when the document has no table:
   `- Senior Software Engineer: 21 days @ 450` (`@` or ` x `). A list is an items list
   when its first entry has that shape; then every entry must have it. The `detail` is the
@@ -59,11 +64,31 @@ Any other paragraph becomes a note under the table.
 * An invoice without items is an error. Errors carry the 1-based line in the whole
   file (front matter included).
 
+## Totals and rounding
+
+All amounts are computed with exact decimal arithmetic, and there is one rounding
+rule: **round to cents, half away from zero** (`1.005 -> 1.01`, `-1.005 -> -1.01`,
+`1.004 -> 1.00`). It is applied in this order:
+
+1. **Line total** = `quantity x rate`, rounded to cents.
+   `7.5 hours @ 133.33` is `999.975`, shown as `999.98`.
+2. **Subtotal** = the exact sum of the rounded line totals (no further rounding).
+3. **Tax** = `subtotal x tax_rate / 100`, rounded to cents.
+   `1,000.99` at `7.7%` is `77.07623`, shown as `77.08`.
+4. **Total** = `subtotal + tax`.
+
+So the line totals shown on the invoice always add up to the subtotal, and subtotal
+plus tax always equals the total, to the cent. Rates and quantities with more than two
+decimals are used at full precision in step 1 and only displayed rounded (quantities
+show at most two decimals, trailing zeros dropped). An invoice whose amounts exceed
+about 7.9e28 is an error.
+
 ## Front matter resolution
 
 * No front matter at all is fine: everything takes its default. Unknown keys are ignored.
 * `currency`, `tax_rate`: front matter, then the client, then the config.
-  `tax_rate` is a percent (`21` or `"21%"`).
+  `tax_rate` is a percent (`21`, `7.7` or `"21%"`); the same forms work for
+  `tax_rate` and `rate` in the config.
 * `client:` must be a key of `clients:` in the config (the error lists the known ones).
   Without `client:` and without `to:`, the recipient is empty.
 * `number`: when absent, the next number from the invoices dir (see below). Prefer
@@ -73,8 +98,41 @@ Any other paragraph becomes a note under the table.
   (front matter `due_days`, else config `due_days`). `due: false` (or `due: none`)
   leaves the due date off the invoice.
 * `status`: `pending` (default), `paid`, `overdue`, `draft`; case-insensitive.
+  The PDF always shows the status as written. `invgen list` and the editor sidebar
+  show an effective status instead: a `pending` invoice whose due date has passed
+  shows as `overdue` with the days late (`overdue 12d`). Any other written status
+  wins, and an invoice without a due date (`due: false`) is never overdue automatically.
+* `paid_on`: `YYYY-MM-DD`, the day the invoice was paid. Optional and not printed on
+  the PDF; `invgen list` shows it next to a `paid` status (`paid 2026-11-20`).
+  `invgen paid` sets `status: paid` and `paid_on` for you, and `invgen status`
+  with any other status removes it. Both change only those front matter lines.
 * `signature`: defaults to `from.name`; `false` hides it, a string replaces it.
-* `tax_label` defaults to `VAT`; `accent` defaults to `#111827` (`#rgb` or `#rrggbb`).
+* `tax_label` defaults to the `tax` label of the invoice language (`VAT`, `IVA`,
+  `USt.`, `TVA`, `Btw`...); `accent` defaults to `#111827` (`#rgb` or `#rrggbb`).
+* `language`: front matter, then the client, then the config, default `en`. Supported:
+  `en`, `es`, `de`, `fr`, `it`, `pt`, `nl` (case-insensitive; a region suffix such as
+  `fr-BE` is accepted and ignored). Any other value is an error listing these. The
+  language changes every label on the invoice (headings, column names, status);
+  dates and amounts keep their format.
+* `template`: front matter, then the config; none means the built-in template.
+
+## Branding and languages
+
+* **Logo**: `from.logo` (SVG, PNG, JPEG, GIF or WebP) is drawn top-left in the header,
+  scaled to fit 14 mm high by 60 mm wide with its aspect ratio kept. Set it in the
+  config (`from:` then `logo: logo.svg`) or per invoice with `from:` / `config: from:`
+  in the front matter; `logo: null` removes it for one invoice. A missing or unreadable
+  file, or one that is not the image type its extension says, is an error naming the path.
+* **Paths** (`from.logo`, `template`) may start with `~`. Relative paths are resolved
+  against the directory of the config file, wherever they are written (config or front
+  matter). In the Flatpak build, keep these files in the config directory
+  (`~/.config/invgen`) or under `~/Documents`, which the sandbox can read.
+* **Labels**: `labels:` in the config replaces single labels whatever the language,
+  e.g. `labels: {bill_to: Customer, tax: Sales tax}`. The keys are listed in
+  [TEMPLATES.md](TEMPLATES.md#labels); a key a language does not define falls back
+  to English. Use `config: labels:` in the front matter to change one invoice only.
+* **Templates**: see [TEMPLATES.md](TEMPLATES.md) for writing your own and the data
+  it receives. `invgen template --export FILE.typ` writes the built-in one.
 
 ## Front matter overrides
 
@@ -122,12 +180,17 @@ number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
 currency: EUR
 tax_rate: 0
 due_days: 14
+language: en                         # optional: en, es, de, fr, it, pt, nl
+labels:                              # optional: override single labels
+  bill_to: Customer
+template: ~/invgen/my-invoice.typ    # optional: custom typst template
 from:
   name: Alex Morgan
   address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
   tax: ["VAT ID: LU12345678", "Tax ID: R.C.S. Luxembourg B000000 Business Permit 00000000/0"]
   email: alex@example.com
   phone: "+352 600 000 000"
+  logo: logo.svg                     # optional: relative to this file
 payment:
   holder: ALEX MORGAN
   iban: DE89 3704 0044 0532 0130 00
@@ -139,14 +202,30 @@ clients:
     tax: ["Tax ID: B12345678"]
     currency: EUR      # optional per-client defaults
     tax_rate: 0
+    language: es       # optional: invoices for this client in Spanish
     rate: 450          # default rate used by templates
     unit: days
     description: Senior Software Engineer
 ```
 
 Sequence numbers are global and monotonically increasing across years
-(EINV-2025-13 is followed by EINV-2026-14). The next number scans `invoices_dir`
-(and up to two levels of subfolders) for `<prefix>-YYYY-N*.md` / `.pdf` files, with N
+(EINV-2025-13 is followed by EINV-2026-14). The next number scans the invoice
+library (see below) for `<prefix>-YYYY-N*.md` / `.pdf` files, with N
 padded or not (`EINV-2025-1`, `EINV-2025-02`), takes the highest N of any year plus one
 and formats it with at least two digits: `EINV-2026-01` for an empty directory.
 `~` in `invoices_dir` is expanded; the default is `~/Documents/Invoices`.
+
+The invoice library is `invoices_dir` plus up to two levels of subfolders
+(`Invoices/2026/`, `Invoices/clients/acme/`); hidden folders such as `.git` are
+skipped. `invgen list`, the editor sidebar and next-number scanning all use it.
+
+The editor's first-run setup and its Clients window write to this file in place:
+only the lines of the keys they change are rewritten (a key's trailing `# comment`
+is kept), new keys go at the end of their block, and everything else stays byte for
+byte. They write values in the same style as above (plain scalars, quoted when
+YAML would read them as something else, lists as `[a, b]`). Client keys must be
+plain YAML keys: letters, digits, `-`, `_` and `.`, starting with a letter or digit.
+Before writing, the result is parsed again and checked; the previous file is kept as
+`config.yaml.bak`. Files the editor cannot change safely (flow mappings like
+`clients: {acme: {...}}`, anchors and aliases, tags, several documents) are never
+rewritten; edit those by hand.

@@ -1,14 +1,33 @@
 //! The JSON view model handed to the typst template. All numbers are
 //! pre-formatted here so the template only lays out strings.
+//!
+//! This is the public data contract for custom templates, documented in
+//! docs/TEMPLATES.md. Bump `CONTRACT_VERSION` on any breaking change
+//! (renamed or removed field, changed meaning); adding fields is compatible.
+
+use std::collections::BTreeMap;
 
 use serde::Serialize;
 
-use crate::model::{Invoice, Party, Status, format_amount, format_date, format_money};
+use super::i18n;
+
+use crate::model::{
+    Decimal, Invoice, Party, Status, format_amount, format_date, format_money, round_cents,
+};
+
+/// Version of the template data contract (docs/TEMPLATES.md).
+pub const CONTRACT_VERSION: u32 = 1;
 
 #[derive(Serialize)]
 pub(super) struct View {
+    contract_version: u32,
+    language: String,
+    labels: BTreeMap<String, String>,
+    /// Virtual path of the logo image (e.g. "/logo.svg"), or null.
+    logo: Option<String>,
     number: String,
     status: &'static str,
+    status_label: String,
     date: String,
     due: Option<String>,
     currency: String,
@@ -68,11 +87,15 @@ fn opt(s: &Option<String>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 21.0 -> "21", 7.5 -> "7.5", 0.125 -> "0.13"
-pub(super) fn format_qty(q: f64) -> String {
-    let s = format!("{:.2}", q);
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".into() } else { s.to_string() }
+/// 21 -> "21", 7.50 -> "7.5", 0.125 -> "0.13" (at most 2 decimals, rounded
+/// half away from zero, no trailing zeros).
+pub(super) fn format_qty(q: Decimal) -> String {
+    let r = round_cents(q).normalize();
+    if r.is_zero() {
+        "0".into()
+    } else {
+        r.to_string()
+    }
 }
 
 /// Accept "#rgb" / "#rrggbb" (with or without '#'); anything else falls back.
@@ -98,21 +121,32 @@ impl From<&Party> for PartyView {
     }
 }
 
-impl From<&Invoice> for View {
-    fn from(inv: &Invoice) -> Self {
+impl View {
+    /// `logo` is the virtual path the logo bytes are served at, if any.
+    pub(super) fn new(inv: &Invoice, logo: Option<String>) -> Self {
         let cur = inv.currency.trim();
+        // An unsupported code (only possible when building an Invoice by hand)
+        // renders in English rather than failing in typst.
+        let language = i18n::normalize_language(&inv.language).unwrap_or("en");
+        let labels = i18n::labels(language, &inv.labels);
         let tax_label = match inv.tax_label.trim() {
-            "" => "VAT".to_string(),
+            "" => labels["tax"].clone(),
             l => l.to_string(),
         };
+        let status = match inv.status {
+            Status::Pending => "pending",
+            Status::Paid => "paid",
+            Status::Overdue => "overdue",
+            Status::Draft => "draft",
+        };
         View {
+            contract_version: CONTRACT_VERSION,
+            language: language.to_string(),
+            status_label: labels[&format!("status_{status}")].clone(),
+            labels,
+            logo,
             number: inv.number.trim().to_string(),
-            status: match inv.status {
-                Status::Pending => "pending",
-                Status::Paid => "paid",
-                Status::Overdue => "overdue",
-                Status::Draft => "draft",
-            },
+            status,
             date: format_date(inv.date),
             due: inv.due.map(format_date),
             currency: cur.to_string(),

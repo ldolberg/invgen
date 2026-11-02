@@ -1,13 +1,16 @@
 //! Markdown + front matter -> Invoice. See docs/FORMAT.md for the format.
 
 use crate::config::Config;
-use crate::model::{Invoice, LineItem, Party, Payment, Status};
+use crate::model::{Decimal, Invoice, LineItem, Party, Payment, Status, num};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_yaml_ng::{Mapping, Value};
 use std::ops::Range;
+use std::path::Path;
+
+use crate::render::i18n;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[error("line {line}: {message}")]
@@ -29,7 +32,6 @@ impl ParseError {
 type Result<T> = std::result::Result<T, ParseError>;
 
 const DEFAULT_ACCENT: &str = "#111827";
-const DEFAULT_TAX_LABEL: &str = "VAT";
 
 /// Parse an invoice. `cfg` supplies defaults (sender, payment, clients, numbering).
 pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
@@ -73,7 +75,8 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         None => None,
     };
 
-    let from = fm.overlay("from", &cfg.from)?;
+    let mut from: Party = fm.overlay("from", &cfg.from)?;
+    from.logo = from.logo.as_deref().map(|p| cfg.resolve_path(p));
     let base_to = client.map(|c| c.party.clone()).unwrap_or_default();
     let to: Party = fm.overlay("to", &base_to)?;
     let payment: Payment = fm.overlay("payment", &cfg.payment)?;
@@ -114,19 +117,11 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         .unwrap_or_else(|| cfg.next_number(date.year()));
     let status = match fm.str("status")? {
         None => Status::default(),
-        Some(s) => match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Status::Pending,
-            "paid" => Status::Paid,
-            "overdue" => Status::Overdue,
-            "draft" => Status::Draft,
-            _ => {
-                return Err(ParseError::new(
-                    fm.line_of("status"),
-                    format!("unknown status `{s}` (use pending, paid, overdue or draft)"),
-                ));
-            }
-        },
+        Some(s) => s
+            .parse()
+            .map_err(|m: String| ParseError::new(fm.line_of("status"), m))?,
     };
+    let paid_on = fm.date("paid_on")?;
     let currency = fm
         .str("currency")?
         .or_else(|| client.and_then(|c| c.currency.clone()))
@@ -137,9 +132,33 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         .number("tax_rate")?
         .or_else(|| client.and_then(|c| c.tax_rate))
         .unwrap_or(cfg.tax_rate);
+    let language = match fm.str("language")? {
+        Some(l) => {
+            i18n::normalize_language(&l).map_err(|m| ParseError::new(fm.line_of("language"), m))?
+        }
+        None => match client.and_then(|c| c.language.as_deref()) {
+            Some(l) => i18n::normalize_language(l).map_err(|m| {
+                ParseError::new(fm.line_of("client"), format!("client language: {m}"))
+            })?,
+            None => i18n::normalize_language(&cfg.language).map_err(|m| {
+                let line = if fm.get("config").is_some() {
+                    fm.line_of("config")
+                } else {
+                    0
+                };
+                ParseError::new(line, format!("config language: {m}"))
+            })?,
+        },
+    }
+    .to_string();
+    let labels = cfg.labels.clone();
+    let template = match fm.str("template")? {
+        Some(t) if !t.trim().is_empty() => Some(cfg.resolve_path(Path::new(t.trim()))),
+        _ => cfg.template.as_deref().map(|p| cfg.resolve_path(p)),
+    };
     let tax_label = fm
         .str("tax_label")?
-        .unwrap_or_else(|| DEFAULT_TAX_LABEL.into());
+        .unwrap_or_else(|| i18n::label(&language, "tax", &labels));
     let accent = match fm.str("accent")? {
         None => DEFAULT_ACCENT.to_string(),
         Some(a) => normalize_hex(&a).ok_or_else(|| {
@@ -164,11 +183,12 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         ));
     }
 
-    Ok(Invoice {
+    let invoice = Invoice {
         number: number.trim().to_string(),
         date,
         due,
         status,
+        paid_on,
         currency,
         from,
         to,
@@ -179,7 +199,17 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         notes: body.notes,
         signature,
         accent,
-    })
+        language,
+        labels,
+        template,
+    };
+    if invoice.checked_total().is_none() {
+        return Err(ParseError::new(
+            lines.line_of(doc.body_start),
+            "amounts are too large to total",
+        ));
+    }
+    Ok(invoice)
 }
 
 // ---------------------------------------------------------------------------
@@ -349,15 +379,18 @@ impl<'a> FrontMatter<'a> {
         }
     }
 
-    fn number(&self, key: &str) -> Result<Option<f64>> {
-        match self.get(key) {
-            None | Some(Value::Null) => Ok(None),
-            Some(Value::Number(n)) => Ok(n.as_f64()),
-            Some(Value::String(s)) => parse_amount(s.trim().trim_end_matches('%'))
-                .map(Some)
-                .map_err(|_| self.err(key, "a number")),
-            Some(_) => Err(self.err(key, "a number")),
-        }
+    fn number(&self, key: &str) -> Result<Option<Decimal>> {
+        let n = match self.get(key) {
+            None | Some(Value::Null) => return Ok(None),
+            Some(Value::Number(n)) => match (n.as_i64(), n.as_u64()) {
+                (Some(i), _) => Some(Decimal::from(i)),
+                (_, Some(u)) => Some(Decimal::from(u)),
+                _ => n.as_f64().and_then(num::from_f64),
+            },
+            Some(Value::String(s)) => num::from_text(s),
+            Some(_) => None,
+        };
+        n.map(Some).ok_or_else(|| self.err(key, "a number"))
     }
 
     fn int(&self, key: &str) -> Result<Option<i64>> {
@@ -857,8 +890,8 @@ fn list_item(entry: &ListEntry) -> Result<LineItem> {
 // ---------------------------------------------------------------------------
 // Numbers
 
-/// `21`, `21 days`, `1,5`... -> (21.0, "days").
-fn parse_quantity(s: &str) -> std::result::Result<(f64, String), String> {
+/// `21`, `21 days`, `7.5h`... -> (21, "days").
+fn parse_quantity(s: &str) -> std::result::Result<(Decimal, String), String> {
     let s = s.trim();
     if s.is_empty() {
         return Err("missing quantity".into());
@@ -874,28 +907,28 @@ fn parse_quantity(s: &str) -> std::result::Result<(f64, String), String> {
     Ok((number, s[end..].trim().to_string()))
 }
 
-fn parse_rate(s: &str) -> std::result::Result<f64, String> {
+fn parse_rate(s: &str) -> std::result::Result<Decimal, String> {
     if s.trim().is_empty() {
         return Err("missing rate".into());
     }
     parse_amount(s).map_err(|_| format!("rate `{}` is not a number", s.trim()))
 }
 
-/// `1,234.50`, `EUR 450`, `€450`, `450 EUR`, `-50` -> f64.
-pub(crate) fn parse_amount(s: &str) -> std::result::Result<f64, ()> {
+/// `1,234.50`, `EUR 450`, `€450`, `450 EUR`, `-50` -> exact decimal.
+pub(crate) fn parse_amount(s: &str) -> std::result::Result<Decimal, ()> {
     let s = s.trim();
-    let (sign, s) = match s.strip_prefix('-') {
-        Some(rest) => (-1.0, rest),
-        None => (1.0, s),
+    let (neg, s) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s),
     };
     let s = s
         .trim_start_matches(|c: char| !(c.is_ascii_digit() || c == '-' || c == '.'))
         .trim_end_matches(|c: char| !c.is_ascii_digit());
-    parse_number(s).map(|n| sign * n).ok_or(())
+    parse_number(s).map(|n| if neg { -n } else { n }).ok_or(())
 }
 
 /// Plain decimal with optional sign and `,` thousands separators in groups of three.
-fn parse_number(s: &str) -> Option<f64> {
+fn parse_number(s: &str) -> Option<Decimal> {
     let s = s.trim();
     let unsigned = s.strip_prefix(['-', '+']).unwrap_or(s);
     let (int, frac) = match unsigned.split_once('.') {
@@ -921,10 +954,16 @@ fn parse_number(s: &str) -> Option<f64> {
     } else if !digits(int) {
         return None;
     }
-    s.replace(',', "")
-        .parse::<f64>()
-        .ok()
-        .filter(|n| n.is_finite())
+    // `Decimal` rejects a leading `+` and a bare `.5` / `5.`, so spell them out.
+    let neg = s.starts_with('-');
+    let int = int.replace(',', "");
+    let int = if int.is_empty() { "0" } else { &int };
+    let text = match frac {
+        Some(f) if !f.is_empty() => format!("{int}.{f}"),
+        _ => int.to_string(),
+    };
+    let n = text.parse::<Decimal>().ok()?;
+    Some(if neg { -n } else { n })
 }
 
 /// Deep-merge `over` onto `cfg`: mappings merge key by key (recursively),
@@ -950,6 +989,7 @@ fn override_config(cfg: &Config, over: &Mapping) -> std::result::Result<Config, 
     let mut merged: Config =
         serde_yaml_ng::from_value(value).map_err(|e| format!("config override: {e}"))?;
     merged.invoices_dir = crate::config::expand_tilde(&merged.invoices_dir);
+    merged.dir = cfg.dir.clone();
     Ok(merged)
 }
 
@@ -957,6 +997,10 @@ fn override_config(cfg: &Config, over: &Mapping) -> std::result::Result<Config, 
 mod tests {
     use super::*;
     use crate::config::ClientConfig;
+
+    fn d(s: &str) -> Decimal {
+        s.parse().unwrap()
+    }
 
     #[test]
     fn config_block_overrides_any_key() {
@@ -973,7 +1017,7 @@ mod tests {
         assert_eq!(inv.to.tax, vec!["Tax ID: B12345678".to_string()]);
         assert_eq!(inv.currency, "CHF");
         // client tax_rate removed, so the overridden config default applies
-        assert_eq!(inv.tax_rate, 3.0);
+        assert_eq!(inv.tax_rate, d("3"));
     }
 
     #[test]
@@ -1036,6 +1080,7 @@ mod tests {
             tax: vec!["VAT ID: LU12345678".into()],
             email: Some("alex@example.com".into()),
             phone: Some("+352 600 000 000".into()),
+            logo: None,
         };
         cfg.payment = Payment {
             holder: Some("ALEX MORGAN".into()),
@@ -1053,10 +1098,11 @@ mod tests {
                     ..Party::default()
                 },
                 currency: Some("USD".into()),
-                tax_rate: Some(21.0),
-                rate: Some(450.0),
+                tax_rate: Some(d("21")),
+                rate: Some(d("450")),
                 unit: Some("days".into()),
                 description: Some("Senior Software Engineer".into()),
+                language: None,
             },
         );
         cfg.clients.insert("acme".into(), ClientConfig::default());
@@ -1101,7 +1147,7 @@ Any other paragraph becomes a note under the table.
         assert_eq!(inv.due, Some(date(2026, 11, 16)));
         assert_eq!(inv.status, Status::Pending);
         assert_eq!(inv.currency, "EUR");
-        assert_eq!(inv.tax_rate, 0.0);
+        assert_eq!(inv.tax_rate, d("0"));
         assert_eq!(inv.tax_label, "VAT");
         assert_eq!(inv.accent, "#111827");
         assert_eq!(inv.to.name, "Northwind Labs SL");
@@ -1113,16 +1159,16 @@ Any other paragraph becomes a note under the table.
             vec![LineItem {
                 description: "Senior Software Engineer".into(),
                 detail: Some("October 2026 period".into()),
-                quantity: 21.0,
+                quantity: d("21"),
                 unit: "days".into(),
-                rate: 450.0,
+                rate: d("450"),
             }]
         );
         assert_eq!(
             inv.notes,
             vec!["Any other paragraph becomes a note under the table."]
         );
-        assert_eq!(inv.total(), 9450.0);
+        assert_eq!(inv.total(), d("9450"));
     }
 
     #[test]
@@ -1141,16 +1187,16 @@ Any other paragraph becomes a note under the table.
         // client beats config
         let inv = parse("---\nclient: northwind\n---\n- A: 1 @ 1\n").unwrap();
         assert_eq!(inv.currency, "USD");
-        assert_eq!(inv.tax_rate, 21.0);
+        assert_eq!(inv.tax_rate, d("21"));
         // front matter beats client
         let inv = parse("---\nclient: northwind\ncurrency: chf\ntax_rate: 7.7\n---\n- A: 1 @ 1\n")
             .unwrap();
         assert_eq!(inv.currency, "CHF");
-        assert_eq!(inv.tax_rate, 7.7);
+        assert_eq!(inv.tax_rate, d("7.7"));
         // config default when the client has none
         let inv = parse("---\nclient: acme\n---\n- A: 1 @ 1\n").unwrap();
         assert_eq!(inv.currency, "EUR");
-        assert_eq!(inv.tax_rate, 0.0);
+        assert_eq!(inv.tax_rate, d("0"));
     }
 
     #[test]
@@ -1174,6 +1220,10 @@ Any other paragraph becomes a note under the table.
         assert_eq!(inv.signature, None);
         assert_eq!(inv.accent, "#aabbcc");
         assert_eq!(inv.status, Status::Paid);
+        assert_eq!(inv.paid_on, None);
+
+        let inv = parse("---\nstatus: paid\npaid_on: 2026-02-10\n---\n- A: 1 @ 1\n").unwrap();
+        assert_eq!(inv.paid_on, Some(date(2026, 2, 10)));
 
         let inv = parse("---\nsignature: L. D.\n---\n- A: 1 @ 1\n").unwrap();
         assert_eq!(inv.signature.as_deref(), Some("L. D."));
@@ -1195,14 +1245,14 @@ Thanks!
         let inv = parse(src).unwrap();
         assert_eq!(inv.items.len(), 3);
         assert_eq!(inv.items[0].description, "Senior Software Engineer");
-        assert_eq!(inv.items[0].quantity, 21.0);
+        assert_eq!(inv.items[0].quantity, d("21"));
         assert_eq!(inv.items[0].unit, "days");
-        assert_eq!(inv.items[0].rate, 450.0);
+        assert_eq!(inv.items[0].rate, d("450"));
         assert_eq!(inv.items[0].detail.as_deref(), Some("October 2026 period"));
-        assert_eq!(inv.items[1].rate, 1234.5);
+        assert_eq!(inv.items[1].rate, d("1234.5"));
         assert_eq!(inv.items[1].unit, "");
         assert_eq!(inv.items[1].detail.as_deref(), Some("Server rental"));
-        assert_eq!(inv.items[2].rate, -50.0);
+        assert_eq!(inv.items[2].rate, d("-50"));
         assert_eq!(inv.items[2].detail, None);
         assert_eq!(inv.notes, vec!["Thanks!"]);
     }
@@ -1221,13 +1271,13 @@ Thanks!
         assert_eq!(inv.items.len(), 3);
         assert_eq!(
             (inv.items[0].quantity, inv.items[0].unit.as_str()),
-            (21.0, "days")
+            (d("21"), "days")
         );
-        assert_eq!(inv.items[0].rate, 450.0);
+        assert_eq!(inv.items[0].rate, d("450"));
         assert_eq!(inv.items[0].detail.as_deref(), Some("Oct"));
-        assert_eq!(inv.items[1].rate, 1234.5);
-        assert_eq!(inv.items[1].quantity, 2.5);
-        assert_eq!(inv.items[2].rate, 99.0);
+        assert_eq!(inv.items[1].rate, d("1234.5"));
+        assert_eq!(inv.items[1].quantity, d("2.5"));
+        assert_eq!(inv.items[2].rate, d("99"));
 
         let inv = parse("| Description | Hours | Rate |\n|-|-|-|\n| X | 3 | 10 |\n").unwrap();
         assert_eq!(inv.items[0].unit, "hours");
@@ -1320,26 +1370,75 @@ please.
         assert_eq!(err.line, 2);
         let err = parse("---\naccent: red\n---\n- A: 1 @ 1\n").unwrap_err();
         assert_eq!(err.line, 2);
+        let err = parse("---\nstatus: paid\npaid_on: last week\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(err.message.contains("`paid_on` must be a date"), "{err}");
         let err = parse("---\nnumber: X\n").unwrap_err();
         assert_eq!(err.line, 1);
     }
 
     #[test]
     fn numbers() {
-        assert_eq!(parse_number("1,234.50"), Some(1234.5));
-        assert_eq!(parse_number("1234"), Some(1234.0));
-        assert_eq!(parse_number(".5"), Some(0.5));
+        assert_eq!(parse_number("1,234.50"), Some(d("1234.5")));
+        assert_eq!(parse_number("1234"), Some(d("1234")));
+        assert_eq!(parse_number(".5"), Some(d("0.5")));
         assert_eq!(parse_number("12,34"), None);
         assert_eq!(parse_number("1.2.3"), None);
         assert_eq!(parse_number(""), None);
-        assert_eq!(parse_amount("€450"), Ok(450.0));
-        assert_eq!(parse_amount("EUR 450"), Ok(450.0));
-        assert_eq!(parse_amount("$ 1,000,000.00"), Ok(1_000_000.0));
-        assert_eq!(parse_amount("-€50"), Ok(-50.0));
+        assert_eq!(parse_amount("€450"), Ok(d("450")));
+        assert_eq!(parse_amount("EUR 450"), Ok(d("450")));
+        assert_eq!(parse_amount("$ 1,000,000.00"), Ok(d("1000000")));
+        assert_eq!(parse_amount("-€50"), Ok(d("-50")));
         assert_eq!(parse_amount("abc"), Err(()));
-        assert_eq!(parse_quantity("21 days"), Ok((21.0, "days".into())));
-        assert_eq!(parse_quantity("7.5h"), Ok((7.5, "h".into())));
+        assert_eq!(parse_quantity("21 days"), Ok((d("21"), "days".into())));
+        assert_eq!(parse_quantity("7.5h"), Ok((d("7.5"), "h".into())));
         assert!(parse_quantity("days").is_err());
+    }
+
+    #[test]
+    fn numbers_are_exact_decimals() {
+        // Kept digit for digit, with no binary noise.
+        assert_eq!(parse_number("1.005").unwrap().to_string(), "1.005");
+        assert_eq!(parse_number("0.1").unwrap().to_string(), "0.1");
+        assert_eq!(parse_number("+5."), Some(d("5")));
+        assert_eq!(parse_number("-.25"), Some(d("-0.25")));
+        assert_eq!(parse_number("-0"), Some(Decimal::ZERO));
+        // Too many digits for `Decimal` is not a number rather than a panic.
+        assert_eq!(parse_number("100000000000000000000000000000000"), None);
+        assert_eq!(parse_amount("EUR 1,234.56"), Ok(d("1234.56")));
+
+        let inv =
+            parse("---\ntax_rate: 7.7\n---\n- A: 7.5 hours @ 133.33\n- B: 0.5 @ 2.01\n").unwrap();
+        assert_eq!(inv.items[0].total(), d("999.98"));
+        assert_eq!(inv.items[1].total(), d("1.01"));
+        assert_eq!(inv.subtotal(), d("1000.99"));
+        assert_eq!(inv.tax(), d("77.08"));
+        assert_eq!(inv.total(), d("1078.07"));
+    }
+
+    #[test]
+    fn tax_rate_forms() {
+        for (yaml, want) in [
+            ("21", "21"),
+            ("21.5", "21.5"),
+            ("\"21%\"", "21"),
+            ("\"7.7 %\"", "7.7"),
+            ("0", "0"),
+        ] {
+            let inv = parse(&format!("---\ntax_rate: {yaml}\n---\n- A: 1 @ 1\n")).unwrap();
+            assert_eq!(inv.tax_rate, d(want), "{yaml}");
+        }
+        for bad in [".nan", ".inf", "abc", "[1]"] {
+            let err = parse(&format!("---\ntax_rate: {bad}\n---\n- A: 1 @ 1\n")).unwrap_err();
+            assert_eq!(err.message, "`tax_rate` must be a number", "{bad}");
+        }
+    }
+
+    #[test]
+    fn overflowing_amounts_are_an_error() {
+        let big = "9".repeat(20);
+        let err = parse(&format!("---\nnumber: X\n---\n- A: {big} @ {big}\n")).unwrap_err();
+        assert_eq!(err.message, "amounts are too large to total");
     }
 
     #[test]
@@ -1374,5 +1473,107 @@ please.
             .unwrap_err();
             assert_eq!(err.line, 3, "{err}");
         }
+    }
+
+    #[test]
+    fn language_precedence_front_matter_client_config() {
+        let mut c = cfg();
+        c.language = "de".into();
+        let src = "---\nclient: northwind\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.language, "de");
+        assert_eq!(inv.tax_label, "USt.");
+
+        c.clients.get_mut("northwind").unwrap().language = Some("ES".into());
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.language, "es");
+        assert_eq!(inv.tax_label, "IVA");
+
+        let src = "---\nclient: northwind\nlanguage: fr-BE\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.language, "fr");
+        assert_eq!(inv.tax_label, "TVA");
+
+        // An explicit tax_label still wins over the translated default.
+        let src = "---\nlanguage: es\ntax_label: IGIC\n---\n- A: 1 @ 1\n";
+        assert_eq!(parse_invoice(src, &c).unwrap().tax_label, "IGIC");
+
+        // Default is English.
+        assert_eq!(parse("- A: 1 @ 1\n").unwrap().language, "en");
+        assert_eq!(parse("- A: 1 @ 1\n").unwrap().tax_label, "VAT");
+    }
+
+    #[test]
+    fn unknown_language_is_an_error_listing_supported() {
+        let err = parse("---\ndate: 2026-03-01\nlanguage: klingon\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(err.message.contains("klingon"), "{err}");
+        assert!(err.message.contains("en, es, de, fr, it, pt, nl"), "{err}");
+
+        let mut c = cfg();
+        c.clients.get_mut("northwind").unwrap().language = Some("xx".into());
+        let err = parse_invoice("---\nclient: northwind\n---\n- A: 1 @ 1\n", &c).unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("`xx`"), "{err}");
+
+        let err = parse("---\nconfig:\n  language: zz\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("`zz`"), "{err}");
+    }
+
+    #[test]
+    fn labels_come_from_config_and_config_block() {
+        let mut c = cfg();
+        c.labels.insert("bill_to".into(), "Customer".into());
+        let inv = parse_invoice("- A: 1 @ 1\n", &c).unwrap();
+        assert_eq!(inv.labels["bill_to"], "Customer");
+        c.labels.insert("tax".into(), "Sales tax".into());
+        let src = "---\nconfig:\n  labels:\n    notes: Remarks\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.labels["bill_to"], "Customer");
+        assert_eq!(inv.labels["notes"], "Remarks");
+        // A `tax` label override is the default tax label.
+        assert_eq!(inv.tax_label, "Sales tax");
+    }
+
+    #[test]
+    fn logo_and_template_paths_resolve_against_config_dir() {
+        let mut c = cfg();
+        c.dir = Some("/cfg/dir".into());
+        c.from.logo = Some("brand/logo.svg".into());
+        c.template = Some("tpl/invoice.typ".into());
+        let inv = parse_invoice("- A: 1 @ 1\n", &c).unwrap();
+        assert_eq!(
+            inv.from.logo.as_deref(),
+            Some(Path::new("/cfg/dir/brand/logo.svg"))
+        );
+        assert_eq!(
+            inv.template.as_deref(),
+            Some(Path::new("/cfg/dir/tpl/invoice.typ"))
+        );
+
+        // Front matter overrides, via `from:`, `config:` and `template:`.
+        let src = "---\nfrom:\n  logo: /abs/other.png\ntemplate: ~/t.typ\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.from.logo.as_deref(), Some(Path::new("/abs/other.png")));
+        assert_eq!(
+            inv.template.as_deref(),
+            Some(crate::config::expand_tilde(Path::new("~/t.typ")).as_path())
+        );
+        assert!(!inv.template.as_ref().unwrap().starts_with("~"));
+
+        let src = "---\nconfig:\n  from:\n    logo: x.png\n  template: y.typ\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.from.logo.as_deref(), Some(Path::new("/cfg/dir/x.png")));
+        assert_eq!(inv.template.as_deref(), Some(Path::new("/cfg/dir/y.typ")));
+
+        // `logo: null` removes the config logo for one invoice.
+        let src = "---\nfrom:\n  logo: null\n---\n- A: 1 @ 1\n";
+        assert_eq!(parse_invoice(src, &c).unwrap().from.logo, None);
+
+        // No logo and no template by default.
+        let inv = parse("- A: 1 @ 1\n").unwrap();
+        assert_eq!(inv.from.logo, None);
+        assert_eq!(inv.template, None);
     }
 }

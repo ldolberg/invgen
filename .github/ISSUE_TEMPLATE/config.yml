@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: User guide
+    url: https://ldolberg.github.io/invgen/guide/
+    about: Install, configuration, invoice format, CLI, editor, recipes and FAQ.
+  - name: Invoice format spec
+    url: https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md
+    about: The full reference for invoice markdown and config.yaml.

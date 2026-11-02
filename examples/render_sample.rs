@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use chrono::NaiveDate;
-use invgen::model::{Invoice, LineItem, Party, Payment, Status};
+use invgen::model::{Decimal, Invoice, LineItem, Party, Payment, Status};
 use invgen::render::Renderer;
 
 fn base() -> Invoice {
@@ -18,6 +18,7 @@ fn base() -> Invoice {
         date: NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
         due: NaiveDate::from_ymd_opt(2026, 11, 15),
         status: Status::Pending,
+        paid_on: None,
         currency: "EUR".into(),
         from: Party {
             name: "Alex Morgan".into(),
@@ -33,6 +34,7 @@ fn base() -> Invoice {
             ],
             email: Some("alex@example.com".into()),
             phone: Some("+352 600 000 000".into()),
+            logo: None,
         },
         to: Party {
             name: "Northwind Labs SL".into(),
@@ -45,6 +47,7 @@ fn base() -> Invoice {
             tax: vec!["Tax ID: B12345678".into()],
             email: None,
             phone: None,
+            logo: None,
         },
         payment: Payment {
             holder: Some("ALEX MORGAN".into()),
@@ -55,11 +58,11 @@ fn base() -> Invoice {
         items: vec![LineItem {
             description: "Senior Software Engineer".into(),
             detail: Some("October 2026 period".into()),
-            quantity: 21.0,
+            quantity: Decimal::from(21),
             unit: "days".into(),
-            rate: 450.0,
+            rate: Decimal::from(450),
         }],
-        tax_rate: 0.0,
+        tax_rate: Decimal::ZERO,
         tax_label: "VAT".into(),
         notes: vec![
             "Reverse charge: VAT to be accounted for by the recipient (Art. 196, Directive 2006/112/EC).".into(),
@@ -67,6 +70,9 @@ fn base() -> Invoice {
         ],
         signature: Some("Alex Morgan".into()),
         accent: "#111827".into(),
+        language: "en".into(),
+        labels: Default::default(),
+        template: None,
     }
 }
 
@@ -79,9 +85,9 @@ fn long() -> Invoice {
         .map(|i| LineItem {
             description: format!("Engineering work package {i}"),
             detail: (i % 3 == 0).then(|| format!("Sprint {i}: backend, reviews and on-call")),
-            quantity: (i % 5 + 1) as f64 * 1.5,
+            quantity: Decimal::from(i % 5 + 1) * Decimal::new(15, 1),
             unit: "hours".into(),
-            rate: 85.0 + i as f64,
+            rate: Decimal::from(85 + i),
         })
         .collect();
     inv
@@ -91,17 +97,22 @@ fn paid() -> Invoice {
     let mut inv = base();
     inv.number = "EINV-2026-25".into();
     inv.status = Status::Paid;
-    inv.tax_rate = 21.0;
+    inv.tax_rate = Decimal::from(21);
     inv.tax_label = "IVA".into();
+    inv.language = "es".into();
+    inv.from.logo = Some(PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/logo.svg"
+    )));
     inv.accent = "#0f766e".into();
     inv.due = None;
     inv.notes = vec![];
     inv.items.push(LineItem {
         description: "Architecture review workshop".into(),
         detail: None,
-        quantity: 2.0,
+        quantity: Decimal::from(2),
         unit: "days".into(),
-        rate: 600.0,
+        rate: Decimal::from(600),
     });
     inv
 }
@@ -138,8 +149,8 @@ fn main() -> anyhow::Result<()> {
 
     // Warm recompile after a small edit, as the live preview does.
     let mut inv = base();
-    for q in [22.0, 23.0, 24.0] {
-        inv.items[0].quantity = q;
+    for q in [22, 23, 24] {
+        inv.items[0].quantity = Decimal::from(q);
         let t = Instant::now();
         let c = r.compile(&inv)?;
         let tc = t.elapsed();

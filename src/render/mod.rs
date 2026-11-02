@@ -5,10 +5,15 @@
 //! typst markup: it is serialized to JSON, exposed as the virtual file
 //! `/invoice.json`, and read by the template with `json(...)`, so user text is
 //! always treated as plain text.
+//!
+//! A custom template (`template:` in the config or front matter) replaces
+//! the built-in one and receives the same data; see docs/TEMPLATES.md.
 
 mod data;
+pub mod i18n;
 mod world;
 
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use anyhow::{Context, anyhow};
@@ -18,15 +23,18 @@ use typst::foundations::{Bytes, Datetime};
 use typst::syntax::{FileId, RootedPath, Source, VirtualPath, VirtualRoot};
 use typst::text::Font;
 use typst::utils::LazyHash;
-use typst::{Library, LibraryExt, WorldExt};
+use typst::{Library, LibraryExt, World, WorldExt};
 use typst_kit::fonts::FontStore;
 use typst_layout::PagedDocument;
 
 use crate::model::Invoice;
 use world::{InvoiceWorld, Shared};
 
-/// The invoice template (typst markup). Reads all data from `/invoice.json`.
-const TEMPLATE: &str = include_str!("../../assets/invoice.typ");
+pub use data::CONTRACT_VERSION;
+
+/// The built-in invoice template (typst markup). Reads all data from
+/// `/invoice.json`. `invgen template --export` writes it out.
+pub const TEMPLATE: &str = include_str!("../../assets/invoice.typ");
 
 /// Fonts bundled into the binary. Order matters only for ties.
 const FONTS: &[&[u8]] = &[
@@ -82,14 +90,10 @@ impl Renderer {
         // typst's own fonts as a fallback for glyph coverage.
         fonts.extend(typst_kit::fonts::embedded());
 
-        let main = virtual_file("/main.typ");
-        let data = virtual_file("/invoice.json");
         let shared = Shared {
             library: LazyHash::new(Library::builder().build()),
             fonts,
-            main,
-            data,
-            source: Source::new(main, TEMPLATE.to_string()),
+            builtin: Source::new(virtual_file("/main.typ"), TEMPLATE.to_string()),
         };
         Ok(Renderer {
             shared,
@@ -98,11 +102,29 @@ impl Renderer {
     }
 
     pub fn compile(&self, inv: &Invoice) -> anyhow::Result<Compiled> {
-        let json = serde_json::to_vec(&data::View::from(inv)).context("serializing invoice")?;
+        let mut files = Vec::new();
+        let logo = match &inv.from.logo {
+            Some(path) => {
+                let (vpath, bytes) = load_logo(path)?;
+                files.push((virtual_file(&vpath), bytes));
+                Some(vpath)
+            }
+            None => None,
+        };
+        let json =
+            serde_json::to_vec(&data::View::new(inv, logo)).context("serializing invoice")?;
+        files.push((virtual_file("/invoice.json"), Bytes::new(json)));
+
+        let (source, root) = match &inv.template {
+            None => (self.shared.builtin.clone(), None),
+            Some(path) => load_template(path)?,
+        };
         let d = inv.date;
         let world = InvoiceWorld {
             shared: &self.shared,
-            data: Bytes::new(json),
+            source,
+            files,
+            root,
             today: Datetime::from_ymd(d.year(), d.month() as u8, d.day() as u8),
         };
 
@@ -114,7 +136,7 @@ impl Renderer {
 
         let doc = result
             .output
-            .map_err(|errs| anyhow!(format_diags(&world, &errs)))?;
+            .map_err(|errs| anyhow!(format_diags(&world, inv.template.as_deref(), &errs)))?;
         Ok(Compiled {
             doc,
             number: inv.number.clone(),
@@ -122,16 +144,89 @@ impl Renderer {
     }
 }
 
-fn format_diags(world: &InvoiceWorld, diags: &[SourceDiagnostic]) -> String {
-    let src = &world.shared.source;
-    let mut out = String::from("invoice template failed to compile:");
+/// Image formats typst can embed, by file extension.
+const LOGO_FORMATS: &[&str] = &["svg", "png", "jpg", "jpeg", "gif", "webp"];
+
+/// Read the logo file and pick the virtual path it is served at.
+fn load_logo(path: &Path) -> anyhow::Result<(String, Bytes)> {
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(str::to_ascii_lowercase)
+        .filter(|e| LOGO_FORMATS.contains(&e.as_str()))
+        .ok_or_else(|| {
+            anyhow!(
+                "logo {}: unsupported image type (use {})",
+                path.display(),
+                LOGO_FORMATS.join(", ")
+            )
+        })?;
+    let bytes =
+        std::fs::read(path).with_context(|| format!("cannot read logo {}", path.display()))?;
+    if !looks_like(&ext, &bytes) {
+        return Err(anyhow!(
+            "logo {} is not a valid {} file",
+            path.display(),
+            ext.to_ascii_uppercase()
+        ));
+    }
+    Ok((format!("/logo.{ext}"), Bytes::new(bytes)))
+}
+
+/// Cheap signature check so a broken logo fails with the logo's path rather
+/// than a decoding error inside the template.
+fn looks_like(ext: &str, b: &[u8]) -> bool {
+    match ext {
+        "png" => b.starts_with(b"\x89PNG"),
+        "jpg" | "jpeg" => b.starts_with(&[0xFF, 0xD8]),
+        "gif" => b.starts_with(b"GIF8"),
+        "webp" => b.len() >= 12 && &b[..4] == b"RIFF" && &b[8..12] == b"WEBP",
+        "svg" => {
+            let head = &b[..b.len().min(4096)];
+            String::from_utf8_lossy(head).contains("<svg")
+        }
+        _ => false,
+    }
+}
+
+/// Load a custom template. Its directory becomes the typst project root so
+/// it can import its own files and images.
+fn load_template(path: &Path) -> anyhow::Result<(Source, Option<PathBuf>)> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("cannot read template {}", path.display()))?;
+    let name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| anyhow!("template {}: invalid file name", path.display()))?;
+    let vpath = VirtualPath::new(format!("/{name}"))
+        .map_err(|e| anyhow!("template {}: {e}", path.display()))?;
+    let id = RootedPath::new(VirtualRoot::Project, vpath).intern();
+    let root = path.parent().map(Path::to_path_buf);
+    Ok((Source::new(id, text), root))
+}
+
+fn format_diags(
+    world: &InvoiceWorld,
+    template: Option<&Path>,
+    diags: &[SourceDiagnostic],
+) -> String {
+    let mut out = match template {
+        None => String::from("invoice template failed to compile:"),
+        Some(p) => format!("template {} failed to compile:", p.display()),
+    };
     for d in diags.iter().filter(|d| d.severity == Severity::Error) {
-        let line = world
-            .range(d.span)
-            .and_then(|r| src.lines().byte_to_line(r.start))
-            .map(|l| format!(" (template line {})", l + 1))
-            .unwrap_or_default();
-        out.push_str(&format!("\n  {}{}", d.message, line));
+        let loc = d.span.id().and_then(|id| {
+            let src = world.source(id).ok()?;
+            let line = world
+                .range(d.span)
+                .and_then(|r| src.lines().byte_to_line(r.start))?
+                + 1;
+            Some(match world.disk_path(id) {
+                Some(path) => format!("{}:{line}: ", path.display()),
+                None => format!("template line {line}: "),
+            })
+        });
+        out.push_str(&format!("\n  {}{}", loc.unwrap_or_default(), d.message));
         for h in &d.hints {
             out.push_str(&format!("\n    hint: {}", h.v));
         }
