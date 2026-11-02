@@ -164,6 +164,16 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         Some(t) if !t.trim().is_empty() => Some(cfg.resolve_path(Path::new(t.trim()))),
         _ => cfg.template.as_deref().map(|p| cfg.resolve_path(p)),
     };
+    // `tax_note: false` (or empty) on the invoice drops a client/config note.
+    let tax_note = match fm.get("tax_note") {
+        Some(Value::Bool(false)) => None,
+        Some(_) => fm.str("tax_note")?,
+        None => client
+            .and_then(|c| c.tax_note.clone())
+            .or_else(|| cfg.tax_note.clone()),
+    }
+    .map(|n| n.trim().to_string())
+    .filter(|n| !n.is_empty());
     let tax_label = fm
         .str("tax_label")?
         .unwrap_or_else(|| i18n::label(&language, "tax", &labels));
@@ -203,6 +213,7 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         items: body.items,
         tax_rate,
         tax_label,
+        tax_note,
         notes: body.notes,
         signature,
         accent,
@@ -739,6 +750,7 @@ enum Column {
     Unit,
     Rate,
     Detail,
+    Tax,
 }
 
 /// Header cell -> column. `Rate (EUR)` matches `rate`; `Days`/`Hours` are a
@@ -759,6 +771,7 @@ fn classify_header(cell: &str) -> Option<(Column, Option<&'static str>)> {
         "unit" | "units" => (Column::Unit, None),
         "rate" | "price" | "unit price" => (Column::Rate, None),
         "detail" | "details" => (Column::Detail, None),
+        "tax" | "vat" | "tax rate" | "vat rate" | "tax %" | "vat %" => (Column::Tax, None),
         _ => return None,
     })
 }
@@ -792,6 +805,7 @@ fn table_items(
     }
     let unit_col = find(Column::Unit);
     let detail_col = find(Column::Detail);
+    let tax_col = find(Column::Tax);
 
     let mut items = Vec::new();
     for (line, cells) in rows {
@@ -811,12 +825,17 @@ fn table_items(
             .or((!qty_unit.is_empty()).then_some(qty_unit))
             .or(implied_unit.map(String::from))
             .unwrap_or_default();
+        let tax_rate = opt_cell(tax_col)
+            .map(|t| parse_tax_rate(&t))
+            .transpose()
+            .map_err(|m| ParseError::new(*line, m))?;
         items.push(LineItem {
             description,
             detail: opt_cell(detail_col),
             quantity,
             unit,
             rate,
+            tax_rate,
         });
     }
     Ok(items)
@@ -840,10 +859,37 @@ fn split_list_item(line: &str) -> Option<(&str, &str, &str)> {
     (!desc.is_empty()).then(|| (desc, left[colon + 1..].trim(), rate.trim()))
 }
 
+/// `21 days @ 450, tax 10%` -> (`21 days @ 450`, Some(`10%`)). Also
+/// `vat 10%`, `tax: 10%`; `,` or `;` before it. The suffix must come after
+/// the `@` (or ` x `) and start with `tax`/`vat`, so commas in the
+/// description or in a rate like `1,234.50` are left alone.
+fn split_tax_suffix(line: &str) -> (&str, Option<&str>) {
+    let Some(at) = line
+        .rfind('@')
+        .or_else(|| line.to_ascii_lowercase().rfind(" x "))
+    else {
+        return (line, None);
+    };
+    for (i, _) in line.rmatch_indices([',', ';']).filter(|&(i, _)| i > at) {
+        let rest = line[i + 1..].trim_start();
+        let lower = rest.to_ascii_lowercase();
+        for kw in ["tax", "vat"] {
+            if let Some(after) = lower.strip_prefix(kw)
+                && after.starts_with([' ', ':'])
+            {
+                let value = rest[kw.len()..].trim_start_matches([' ', ':']).trim();
+                return (line[..i].trim_end(), Some(value));
+            }
+        }
+    }
+    (line, None)
+}
+
 fn list_item(entry: &ListEntry) -> Result<LineItem> {
     let mut text_lines = entry.text.lines();
-    let head = text_lines.next().unwrap_or("");
+    let (head, tax) = split_tax_suffix(text_lines.next().unwrap_or(""));
     let err = |m: String| ParseError::new(entry.line, m);
+    let tax_rate = tax.map(parse_tax_rate).transpose().map_err(err)?;
     let (desc, qty, rate) = split_list_item(head).ok_or_else(|| {
         err(format!(
             "`{head}` is not an item: write it as `Description: 21 days @ 450`"
@@ -863,6 +909,7 @@ fn list_item(entry: &ListEntry) -> Result<LineItem> {
         quantity,
         unit,
         rate,
+        tax_rate,
     })
 }
 
@@ -891,6 +938,14 @@ fn parse_rate(s: &str) -> std::result::Result<Decimal, String> {
         return Err("missing rate".into());
     }
     parse_amount(s).map_err(|_| format!("rate `{}` is not a number", s.trim()))
+}
+
+/// A per-line tax rate: `21`, `21%`, `7.7 %`. Must not be negative.
+fn parse_tax_rate(s: &str) -> std::result::Result<Decimal, String> {
+    let t = s.trim();
+    parse_number(t.strip_suffix('%').unwrap_or(t))
+        .filter(|n| *n >= Decimal::ZERO)
+        .ok_or_else(|| format!("tax rate `{t}` is not a percentage like `21%`"))
 }
 
 /// `1,234.50`, `EUR 450`, `€450`, `450 EUR`, `-50` -> exact decimal.
@@ -1064,6 +1119,7 @@ mod tests {
                 unit: Some("days".into()),
                 description: Some("Senior Software Engineer".into()),
                 language: None,
+                tax_note: None,
             },
         );
         cfg.clients.insert("acme".into(), ClientConfig::default());
@@ -1123,6 +1179,7 @@ Any other paragraph becomes a note under the table.
                 quantity: d("21"),
                 unit: "days".into(),
                 rate: d("450"),
+                tax_rate: None,
             }]
         );
         assert_eq!(
@@ -1529,5 +1586,132 @@ please.
         let inv = parse("- A: 1 @ 1\n").unwrap();
         assert_eq!(inv.from.logo, None);
         assert_eq!(inv.template, None);
+    }
+
+    #[test]
+    fn tax_column_sets_per_line_rates() {
+        let src = "---\ntax_rate: 21\n---\n\
+                   | Description | Qty | Rate | VAT (%) |\n|---|---|---|---|\n\
+                   | Consulting | 2 | 450 | |\n| Training | 1 | 600 | 10% |\n\
+                   | Books | 3 | 40 | 0 |\n| Food | 1 | 10 | 5.5 % |\n";
+        let inv = parse(src).unwrap();
+        let rates: Vec<_> = inv.items.iter().map(|it| it.tax_rate).collect();
+        assert_eq!(
+            rates,
+            vec![None, Some(d("10")), Some(d("0")), Some(d("5.5"))]
+        );
+        assert_eq!(inv.item_tax_rate(&inv.items[0]), d("21"));
+        assert_eq!(inv.tax_breakdown().len(), 4);
+        // 189 + 60 + 0 + 0.55
+        assert_eq!(inv.tax(), d("249.55"));
+        assert_eq!(inv.total(), d("1630") + d("249.55"));
+
+        for header in ["Tax", "tax rate", "VAT %", "Tax (%)"] {
+            let src = format!(
+                "| Description | Qty | Rate | {header} |\n|---|---|---|---|\n| A | 1 | 100 | 7 |\n"
+            );
+            assert_eq!(
+                parse(&src).unwrap().items[0].tax_rate,
+                Some(d("7")),
+                "{header}"
+            );
+        }
+
+        let err = parse(
+            "\n| Description | Qty | Rate | Tax |\n|---|---|---|---|\n| A | 1 | 1 | lots |\n",
+        )
+        .unwrap_err();
+        assert_eq!(err.line, 4);
+        assert!(err.message.contains("tax rate `lots`"), "{}", err.message);
+        let err =
+            parse("| Description | Qty | Rate | Tax |\n|---|---|---|---|\n| A | 1 | 1 | -5% |\n")
+                .unwrap_err();
+        assert!(err.message.contains("tax rate"), "{}", err.message);
+    }
+
+    #[test]
+    fn list_items_take_a_tax_suffix() {
+        let src = "- Consulting: 21 days @ 450, tax 10%\n\
+                   - Books: 2 x 1,234.50; vat: 0%\n\
+                   - Support: 3 hours @ EUR 80 , TAX 21\n\
+                   - Plain: 1 @ 1,000\n\
+                   - Note, taxi: 1 @ 5\n";
+        let inv = parse(src).unwrap();
+        let got: Vec<_> = inv
+            .items
+            .iter()
+            .map(|it| (it.description.as_str(), it.rate, it.tax_rate))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("Consulting", d("450"), Some(d("10"))),
+                ("Books", d("1234.50"), Some(d("0"))),
+                ("Support", d("80"), Some(d("21"))),
+                ("Plain", d("1000"), None),
+                ("Note, taxi", d("5"), None),
+            ]
+        );
+        assert_eq!(inv.items[0].unit, "days");
+        let err = parse("- A: 1 @ 1, tax many\n").unwrap_err();
+        assert!(err.message.contains("tax rate `many`"), "{}", err.message);
+        assert_eq!(split_tax_suffix("A: 1 @ 1"), ("A: 1 @ 1", None));
+        assert_eq!(
+            split_tax_suffix("Hotel, tax: 1 @ 5"),
+            ("Hotel, tax: 1 @ 5", None)
+        );
+        assert_eq!(
+            split_tax_suffix("A: 1 @ 1,tax:7%"),
+            ("A: 1 @ 1", Some("7%"))
+        );
+    }
+
+    #[test]
+    fn single_rate_invoices_are_unchanged() {
+        // No tax column or suffix: the invoice rate applies to everything,
+        // exactly as before per-line rates existed.
+        let inv =
+            parse("---\ntax_rate: 7.7\n---\n- A: 7.5 hours @ 133.33\n- B: 1 @ 0.99\n").unwrap();
+        assert!(inv.items.iter().all(|it| it.tax_rate.is_none()));
+        let groups = inv.tax_breakdown();
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].base, inv.subtotal());
+        assert_eq!(
+            inv.tax(),
+            crate::model::round_cents(inv.subtotal() * d("7.7") / d("100"))
+        );
+    }
+
+    #[test]
+    fn tax_note_precedence() {
+        let mut c = cfg();
+        assert_eq!(parse_invoice("- A: 1 @ 1\n", &c).unwrap().tax_note, None);
+        // Config default.
+        c.tax_note = Some("exempt".into());
+        let note = |src: &str, c: &Config| parse_invoice(src, c).unwrap().tax_note;
+        assert_eq!(note("- A: 1 @ 1\n", &c).as_deref(), Some("exempt"));
+        // Client beats config; a client without a note falls back to it.
+        c.clients.get_mut("northwind").unwrap().tax_note = Some("reverse_charge".into());
+        assert_eq!(
+            note("---\nclient: northwind\n---\n- A: 1 @ 1\n", &c).as_deref(),
+            Some("reverse_charge")
+        );
+        assert_eq!(
+            note("---\nclient: acme\n---\n- A: 1 @ 1\n", &c).as_deref(),
+            Some("exempt")
+        );
+        // Front matter beats both; free text is kept (trimmed).
+        let src = "---\nclient: northwind\ntax_note: \"  Exempt under Article 132.  \"\n---\n- A: 1 @ 1\n";
+        assert_eq!(note(src, &c).as_deref(), Some("Exempt under Article 132."));
+        // `false` or an empty value drops the inherited note.
+        for v in ["false", "\"\""] {
+            let src = format!("---\nclient: northwind\ntax_note: {v}\n---\n- A: 1 @ 1\n");
+            assert_eq!(note(&src, &c), None, "{v}");
+        }
+        // A `config:` block can set it too.
+        let src = "---\nconfig:\n  tax_note: outside_scope\n---\n- A: 1 @ 1\n";
+        assert_eq!(note(src, &cfg()).as_deref(), Some("outside_scope"));
+        let err = parse("---\ntax_note: [a, b]\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2);
     }
 }

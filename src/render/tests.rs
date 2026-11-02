@@ -36,9 +36,11 @@ fn sample() -> Invoice {
             quantity: Decimal::from(21),
             unit: "days".into(),
             rate: Decimal::from(450),
+            tax_rate: None,
         }],
         tax_rate: Decimal::ZERO,
         tax_label: "VAT".into(),
+        tax_note: None,
         notes: vec!["Reverse charge.".into()],
         signature: Some("Alex Morgan".into()),
         accent: "#111827".into(),
@@ -406,4 +408,112 @@ fn example_invoices_render_with_example_config() {
         seen += 1;
     }
     assert!(seen >= 3);
+}
+
+fn multi_rate(lang: &str) -> Invoice {
+    let mut inv = sample();
+    inv.language = lang.into();
+    inv.tax_label = String::new();
+    inv.tax_rate = Decimal::from(21);
+    let mut training = inv.items[0].clone();
+    training.description = "Training".into();
+    training.quantity = Decimal::from(2);
+    training.rate = Decimal::from(600);
+    training.tax_rate = Some(Decimal::from(10));
+    inv.items.push(training);
+    inv
+}
+
+#[test]
+fn single_rate_view_is_unchanged() {
+    let mut inv = sample();
+    inv.tax_rate = Decimal::from(21);
+    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    assert_eq!(v["tax_rate"], "21%");
+    assert_eq!(v["tax"], "EUR 1,984.50");
+    assert_eq!(v["total"], "EUR 11,434.50");
+    assert_eq!(v["items"][0]["tax_rate"], "21%");
+    assert_eq!(v["tax_breakdown"].as_array().unwrap().len(), 1);
+    assert!(v["tax_note"].is_null());
+    let text = doc_text(&Renderer::new().unwrap().compile(&inv).unwrap());
+    assert!(text.contains("VAT (21%)"), "{text}");
+    assert!(!text.contains("Taxable amount"), "{text}");
+}
+
+#[test]
+fn multi_rate_breakdown_renders_in_two_languages() {
+    let r = Renderer::new().unwrap();
+    let inv = multi_rate("en");
+    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    // 9,450 at 21% = 1,984.50; 1,200 at 10% = 120.00.
+    let groups = v["tax_breakdown"].as_array().unwrap();
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["rate"], "21%");
+    assert_eq!(groups[0]["base"], "EUR 9,450.00");
+    assert_eq!(groups[0]["tax"], "EUR 1,984.50");
+    assert_eq!(groups[1]["rate"], "10%");
+    assert_eq!(groups[1]["base"], "EUR 1,200.00");
+    assert_eq!(groups[1]["tax"], "EUR 120.00");
+    assert_eq!(v["tax"], "EUR 2,104.50");
+    assert_eq!(v["total"], "EUR 12,754.50");
+    assert_eq!(v["items"][1]["tax_rate"], "10%");
+
+    let en = doc_text(&r.compile(&inv).unwrap());
+    for s in [
+        "VAT 21%",
+        "VAT 10%",
+        "Taxable amount EUR 9,450.00",
+        "EUR 1,984.50",
+        "EUR 120.00",
+        "EUR 12,754.50",
+    ] {
+        assert!(en.contains(s), "`{s}` missing in {en}");
+    }
+    assert!(!en.contains("VAT (21%)"), "{en}");
+
+    let es = doc_text(&r.compile(&multi_rate("es")).unwrap());
+    for s in ["IVA 21%", "IVA 10%", "Base imponible EUR 1,200.00"] {
+        assert!(es.contains(s), "`{s}` missing in {es}");
+    }
+}
+
+#[test]
+fn tax_note_presets_render_translated() {
+    let r = Renderer::new().unwrap();
+    for lang in i18n::SUPPORTED {
+        for preset in crate::model::TAX_NOTE_PRESETS {
+            let mut inv = sample();
+            inv.language = lang.to_string();
+            inv.tax_note = Some(preset.to_string());
+            let key = format!("tax_note_{preset}");
+            let expected = i18n::label(lang, &key, &Default::default());
+            assert_ne!(expected, key, "{lang}: {key} has no text");
+            let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+            assert_eq!(v["tax_note"], expected.as_str(), "{lang} {preset}");
+            if *preset == "reverse_charge" {
+                assert!(
+                    expected.contains("196") && expected.contains("2006/112/"),
+                    "{lang}: {expected}"
+                );
+            }
+        }
+    }
+    // The text reaches the PDF (two languages are enough for the layout).
+    for (lang, needle) in [("en", "Reverse charge"), ("de", "Steuerschuldnerschaft")] {
+        let mut inv = sample();
+        inv.language = lang.into();
+        inv.tax_note = Some("reverse_charge".into());
+        let text = doc_text(&r.compile(&inv).unwrap());
+        assert!(text.contains(needle), "{lang}: {text}");
+    }
+    // Free text is printed as written; label overrides reword presets.
+    let mut inv = sample();
+    inv.tax_note = Some("Not subject to VAT, section 4 of the local VAT act.".into());
+    let text = doc_text(&r.compile(&inv).unwrap());
+    assert!(text.contains("section 4 of the local VAT act"), "{text}");
+    inv.tax_note = Some("exempt".into());
+    inv.labels
+        .insert("tax_note_exempt".into(), "Custom exemption text".into());
+    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    assert_eq!(v["tax_note"], "Custom exemption text");
 }

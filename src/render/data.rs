@@ -13,6 +13,7 @@ use super::i18n;
 
 use crate::model::{
     Decimal, Invoice, Party, Status, format_amount, format_date, format_money, round_cents,
+    tax_note_preset,
 };
 
 /// Version of the template data contract (docs/TEMPLATES.md).
@@ -40,6 +41,10 @@ pub(super) struct View {
     tax_label: String,
     tax_rate: String,
     tax: String,
+    /// One entry per distinct tax rate, highest first (empty without items).
+    tax_breakdown: Vec<TaxGroupView>,
+    /// Legal tax mention (preset translated, or free text), or null.
+    tax_note: Option<String>,
     total: String,
     notes: Vec<String>,
     signature: Option<String>,
@@ -70,6 +75,23 @@ struct ItemView {
     unit: String,
     rate: String,
     total: String,
+    /// Tax rate that applies to this line, e.g. "21%".
+    tax_rate: String,
+}
+
+#[derive(Serialize)]
+struct TaxGroupView {
+    /// e.g. "21%"
+    rate: String,
+    /// Sum of the line totals at this rate, e.g. "EUR 1,000.00".
+    base: String,
+    /// Tax at this rate, e.g. "EUR 210.00".
+    tax: String,
+}
+
+/// 21 -> "21%", 7.70 -> "7.7%".
+fn format_rate(r: Decimal) -> String {
+    format!("{}%", format_qty(r))
 }
 
 /// Drop empty / whitespace-only strings.
@@ -133,6 +155,17 @@ impl View {
             "" => labels["tax"].clone(),
             l => l.to_string(),
         };
+        let breakdown = inv.tax_breakdown();
+        // With a single rate (the common case) `tax_rate` is that rate, even
+        // when every line overrides the invoice default.
+        let tax_rate = match breakdown.as_slice() {
+            [only] => only.rate,
+            _ => inv.tax_rate,
+        };
+        let tax_note = opt(&inv.tax_note).map(|n| match tax_note_preset(&n) {
+            Some(p) => labels[&format!("tax_note_{p}")].clone(),
+            None => n,
+        });
         let status = match inv.status {
             Status::Pending => "pending",
             Status::Paid => "paid",
@@ -169,12 +202,22 @@ impl View {
                     unit: it.unit.trim().to_string(),
                     rate: format_amount(it.rate),
                     total: format_money(cur, it.total()),
+                    tax_rate: format_rate(inv.item_tax_rate(it)),
                 })
                 .collect(),
             subtotal: format_money(cur, inv.subtotal()),
             tax_label,
-            tax_rate: format!("{}%", format_qty(inv.tax_rate)),
+            tax_rate: format_rate(tax_rate),
             tax: format_money(cur, inv.tax()),
+            tax_breakdown: breakdown
+                .iter()
+                .map(|g| TaxGroupView {
+                    rate: format_rate(g.rate),
+                    base: format_money(cur, g.base),
+                    tax: format_money(cur, g.tax),
+                })
+                .collect(),
+            tax_note,
             total: format_money(cur, inv.total()),
             notes: clean(&inv.notes),
             signature: opt(&inv.signature),

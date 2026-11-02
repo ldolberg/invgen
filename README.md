@@ -143,6 +143,12 @@ table holds the line items, and loose paragraphs become notes. List items
 [docs/FORMAT.md](docs/FORMAT.md). A `config:` block in the front matter overrides
 any config key for a single invoice.
 
+Lines can carry their own tax rate (a `Tax` column, or `- Training: 2 days @ 600, tax 10%`);
+the totals then show one row per rate. `tax_note: reverse_charge` (also `exempt`,
+`outside_scope` or free text; per invoice, per client or in the config) prints a
+translated legal mention under the totals, and `invgen build` warns when an invoice
+charges no tax to a client with a VAT ID and has no such note.
+
 ## Branding, languages and templates
 
 ```yaml

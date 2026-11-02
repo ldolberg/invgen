@@ -86,8 +86,10 @@ bump. A template can guard against a future breaking change with:
 | `items` | list of items | Line items (see below). |
 | `subtotal` | string | Formatted money, e.g. `EUR 9,450.00`. |
 | `tax_label` | string | Tax row label (front matter `tax_label`, else the translated `tax` label). |
-| `tax_rate` | string | Tax rate with percent sign, e.g. `21%`. |
-| `tax` | string | Formatted tax amount. |
+| `tax_rate` | string | Tax rate with percent sign, e.g. `21%`. When every line uses the same rate, that rate (even if it differs from the invoice default); with several rates, the invoice default. |
+| `tax` | string | Formatted tax amount (the sum of the per-rate taxes). |
+| `tax_breakdown` | list of tax groups | One entry per distinct tax rate, highest rate first; empty when there are no items. More than one entry means the invoice mixes rates (see below). |
+| `tax_note` | string or none | Legal tax mention to print near the totals: a `tax_note` preset already translated into `language` (from the `tax_note_*` labels), or the user's free text. |
 | `total` | string | Formatted total. |
 | `notes` | list of strings | Paragraphs shown under the items. |
 | `signature` | string or none | Signature text; none hides it. |
@@ -97,7 +99,15 @@ lines), `email` and `phone` (string or none). Empty lines are removed.
 
 An **item** has `description` (string), `detail` (string or none), `qty`
 (formatted number, e.g. `21` or `7.5`), `unit` (string, may be empty), `rate`
-(formatted amount without currency, e.g. `450.00`) and `total` (formatted money).
+(formatted amount without currency, e.g. `450.00`), `total` (formatted money)
+and `tax_rate` (the rate that applies to the line, e.g. `21%`).
+
+A **tax group** has `rate` (e.g. `10%`), `base` (formatted money: the sum of the
+line totals at that rate) and `tax` (formatted money). The bases add up to
+`subtotal` and the taxes to `tax`. The built-in template shows a single
+`tax_label (tax_rate)` row when `tax_breakdown` has at most one entry, and one
+row per group otherwise. These fields were added without a version bump; a
+template that ignores them keeps working and shows the combined `tax`.
 
 ### Labels
 
@@ -125,6 +135,7 @@ through too, so a custom template can define its own translatable strings.
 | `total` | Total |
 | `subtotal` | Subtotal |
 | `tax` | VAT |
+| `tax_base` | Taxable amount (per-rate base in the tax breakdown) |
 | `total_due` | Total due |
 | `notes` | Notes |
 | `contact` | Contact |
@@ -133,6 +144,9 @@ through too, so a custom template can define its own translatable strings.
 | `status_paid` | Paid |
 | `status_overdue` | Overdue |
 | `status_draft` | Draft |
+| `tax_note_reverse_charge` | Reverse charge: VAT to be accounted for by the recipient (Article 196 of Council Directive 2006/112/EC). |
+| `tax_note_exempt` | Exempt from VAT. |
+| `tax_note_outside_scope` | Outside the scope of VAT. |
 
 ### Example
 
