@@ -190,7 +190,7 @@ starting point. The data a template receives is documented and versioned in
 | Ctrl+S | Save |
 | Ctrl+E | Export PDF |
 | Ctrl+= / Ctrl+- | Zoom preview in / out |
-| Ctrl+0 | Reset zoom |
+| Ctrl+0 | Fit the preview to the panel width |
 
 ## Fuzzing
 
