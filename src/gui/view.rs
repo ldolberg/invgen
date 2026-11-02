@@ -30,6 +30,18 @@ pub fn draw(app: &mut App, ui: &mut egui::Ui) {
         .show_separator_line(false)
         .show(ui, |ui| header(app, ui, &p));
 
+    if app.lock.is_locked() {
+        egui::Panel::top("issued-lock")
+            .frame(
+                Frame::new()
+                    .fill(p.surface)
+                    .inner_margin(Margin::symmetric(12, 6))
+                    .stroke(Stroke::new(1.0, p.border)),
+            )
+            .show_separator_line(false)
+            .show(ui, |ui| lock_banner(app, ui, &p));
+    }
+
     egui::Panel::bottom("status")
         .frame(
             Frame::new()
@@ -152,6 +164,16 @@ fn header(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
             {
                 app.open_pdf();
             }
+            if ui
+                .button("Send")
+                .on_hover_text(
+                    "Export, then open your mail client with the client's email, \
+                     a subject, a body and the PDF attached",
+                )
+                .clicked()
+            {
+                app.send();
+            }
             ui.add_space(8.0);
             if ui
                 .button("Save")
@@ -186,6 +208,36 @@ fn header(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                 header_info(app, ui, p);
             });
+        });
+    });
+}
+
+/// Shown while the open invoice carries `issued_hash`.
+fn lock_banner(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
+    let changed = matches!(app.lock, crate::lock::State::Changed { .. });
+    ui.horizontal(|ui| {
+        let (color, text) = if changed {
+            (
+                p.error,
+                "Issued invoice changed since it was exported: the PDF you sent no \
+                 longer matches. Prefer a credit note.",
+            )
+        } else {
+            (p.warn, "Issued invoice, edits change a sent document")
+        };
+        ui.label(RichText::new("\u{1F512}").color(color));
+        ui.add(egui::Label::new(RichText::new(text).color(p.text)).truncate());
+        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+            if ui
+                .button("Unlock")
+                .on_hover_text(
+                    "Remove issued_hash from the front matter. \
+                     The next export locks the invoice again.",
+                )
+                .clicked()
+            {
+                app.unlock();
+            }
         });
     });
 }

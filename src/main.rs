@@ -9,6 +9,7 @@ use invgen::model::{Decimal, Invoice, Status, format_amount, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
 use invgen::report::{self, Aging, Filter, Library, Severity};
+use invgen::{lock, lookup, send};
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -49,6 +50,10 @@ enum Cmd {
         /// Also write PNG previews of every page into this directory.
         #[arg(long, value_name = "DIR")]
         png: Option<PathBuf>,
+        /// Fail instead of warning when an issued invoice changed since it
+        /// was first exported (see `issued_hash` in docs/FORMAT.md).
+        #[arg(long)]
+        strict: bool,
     },
     /// Create the next invoice in the invoices directory.
     New {
@@ -94,7 +99,8 @@ enum Cmd {
         format: ListFormat,
     },
     /// Check the library: duplicate numbers, gaps, dates out of order,
-    /// files that fail to parse, missing client name or sender tax lines.
+    /// files that fail to parse, missing client name or sender tax lines,
+    /// issued invoices that changed since they were exported.
     Check {
         /// Exit with status 1 on warnings too, not only on errors.
         #[arg(long)]
@@ -115,6 +121,21 @@ enum Cmd {
         #[arg(value_parser = PossibleValuesParser::new(["pending", "paid", "overdue", "draft"])
             .map(|s| s.parse::<Status>().unwrap_or_default()))]
         status: Status,
+    },
+    /// Email an invoice: build the PDF if it is missing or out of date, then
+    /// open the desktop mail client with the client's address, a subject,
+    /// a body and the PDF attached. invgen never sends mail itself.
+    Send {
+        /// Invoice markdown file, or an invoice number in the invoices
+        /// directory (`EINV-2026-07`, or just `7`).
+        #[arg(value_name = "FILE|NUMBER")]
+        invoice: String,
+        /// Print the message and the command instead of running anything.
+        #[arg(long)]
+        dry_run: bool,
+        /// Record `sent_on: <today>` in the invoice once the mail client opened.
+        #[arg(long)]
+        mark_sent: bool,
     },
     /// Show the config path, creating a commented default if it is missing.
     Config {
@@ -160,10 +181,23 @@ fn run(cli: Cli) -> Result<ExitCode> {
     match cli.command {
         None => invgen::gui::run(None, config_path).map(|_| ExitCode::SUCCESS),
         Some(Cmd::Edit { file }) => invgen::gui::run(file, config_path).map(|_| ExitCode::SUCCESS),
-        Some(Cmd::Build { file, output, png }) => {
+        Some(Cmd::Build {
+            file,
+            output,
+            png,
+            strict,
+        }) => {
             let cfg = load_config(config_path.as_deref())?;
             let renderer = Renderer::new()?;
-            match build(&cfg, &renderer, &file, output.as_deref(), png.as_deref())? {
+            let opts = BuildOpts { lock: true, strict };
+            match build(
+                &cfg,
+                &renderer,
+                &file,
+                output.as_deref(),
+                png.as_deref(),
+                opts,
+            )? {
                 Some(_) => Ok(ExitCode::SUCCESS),
                 None => Ok(ExitCode::FAILURE),
             }
@@ -206,6 +240,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let cfg = load_config(config_path.as_deref())?;
             cmd_set_status(&cfg, &invoice, status, None)
         }
+        Some(Cmd::Send {
+            invoice,
+            dry_run,
+            mark_sent,
+        }) => {
+            let cfg = load_config(config_path.as_deref())?;
+            cmd_send(&cfg, config_path.as_deref(), &invoice, dry_run, mark_sent)
+        }
         Some(Cmd::Config { edit }) => cmd_config(config_path.as_deref(), edit),
         Some(Cmd::Template { export, force }) => cmd_template(export.flatten().as_deref(), force),
     }
@@ -219,11 +261,12 @@ fn load_config(path: Option<&Path>) -> Result<Config> {
 }
 
 /// Parse `file` and print compiler-style errors. `None` means a parse error was reported.
-fn parse_file(cfg: &Config, file: &Path) -> Result<Option<Invoice>> {
+/// The source text comes along for front matter edits (the issued lock).
+fn parse_file(cfg: &Config, file: &Path) -> Result<Option<(String, Invoice)>> {
     let src =
         std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
     match parse_invoice(&src, cfg) {
-        Ok(inv) => Ok(Some(inv)),
+        Ok(inv) => Ok(Some((src, inv))),
         Err(e) => {
             let st = Style::stderr();
             let loc = if e.line > 0 {
@@ -246,15 +289,26 @@ fn sanitize(s: &str) -> String {
     invgen::model::file_stem(s)
 }
 
-/// Parse + render one invoice. Returns the written PDF path, or None on a parse error.
+#[derive(Clone, Copy)]
+struct BuildOpts {
+    /// Record `issued_hash` when a non-draft invoice is built for the first
+    /// time (`watch` does not: it rebuilds while the invoice is being written).
+    lock: bool,
+    /// Refuse to build an issued invoice whose content changed.
+    strict: bool,
+}
+
+/// Parse + render one invoice. Returns the written PDF path, or None on a
+/// parse error (or, with `strict`, a changed issued invoice).
 fn build(
     cfg: &Config,
     renderer: &Renderer,
     file: &Path,
     output: Option<&Path>,
     png: Option<&Path>,
+    opts: BuildOpts,
 ) -> Result<Option<PathBuf>> {
-    let Some(inv) = parse_file(cfg, file)? else {
+    let Some((src, inv)) = parse_file(cfg, file)? else {
         return Ok(None);
     };
     if let Some(w) = inv.tax_note_warning() {
@@ -266,9 +320,26 @@ fn build(
             w
         );
     }
+    let state = lock::state(&src, &inv);
+    if let lock::State::Changed { recorded, current } = &state {
+        warn_changed(file, &inv, recorded, current, opts.strict);
+        if opts.strict {
+            return Ok(None);
+        }
+    }
     let compiled = renderer
         .compile(&inv)
         .with_context(|| format!("rendering {}", file.display()))?;
+    // Lock before writing the PDF, so the PDF stays newer than the markdown
+    // (`invgen send` rebuilds a PDF older than its markdown).
+    let mut locked = false;
+    if opts.lock
+        && state == lock::State::Open
+        && let Some(text) = lock::record(&src, &inv)?
+    {
+        std::fs::write(file, text).with_context(|| format!("writing {}", file.display()))?;
+        locked = true;
+    }
     let out = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| default_output(file, &inv));
@@ -310,7 +381,128 @@ fn build(
         st.bold(&format_money(&inv.currency, inv.total())),
         st.dim(&out.display().to_string())
     );
+    if locked {
+        println!(
+            "{} {} as issued ({} recorded in {})",
+            st.dim("locked"),
+            inv.number,
+            lock::KEY,
+            file.display()
+        );
+    }
     Ok(Some(out))
+}
+
+/// Report an issued invoice whose resolved content changed.
+fn warn_changed(file: &Path, inv: &Invoice, recorded: &str, current: &str, error: bool) {
+    let st = Style::stderr();
+    let label = if error {
+        st.red_bold("error:")
+    } else {
+        st.yellow("warning:")
+    };
+    eprintln!(
+        "{} {} {}",
+        st.bold(&format!("{}:", file.display())),
+        label,
+        lock::changed_message(&inv.number)
+    );
+    eprintln!(
+        "  {} recorded {recorded}, now {current}{}",
+        st.dim(&format!("{}:", lock::KEY)),
+        if error {
+            ""
+        } else {
+            " (building anyway; --strict refuses)"
+        }
+    );
+}
+
+fn cmd_send(
+    cfg: &Config,
+    config_path: Option<&Path>,
+    arg: &str,
+    dry_run: bool,
+    mark_sent: bool,
+) -> Result<ExitCode> {
+    let file = lookup::resolve(cfg, arg)?;
+    let Some((src, inv)) = parse_file(cfg, &file)? else {
+        return Ok(ExitCode::FAILURE);
+    };
+    let pdf = default_output(&file, &inv);
+    let config_file = config_path
+        .map(Path::to_path_buf)
+        .unwrap_or_else(Config::path);
+    let stale = send::is_stale(&pdf, &file, Some(&config_file));
+    let st = Style::stdout();
+    let est = Style::stderr();
+
+    if stale && !dry_run {
+        let renderer = Renderer::new()?;
+        let opts = BuildOpts {
+            lock: true,
+            strict: false,
+        };
+        if build(cfg, &renderer, &file, None, None, opts)?.is_none() {
+            return Ok(ExitCode::FAILURE);
+        }
+    } else if let lock::State::Changed { recorded, current } = lock::state(&src, &inv) {
+        warn_changed(&file, &inv, &recorded, &current, false);
+    }
+
+    let msg = send::compose(&inv, &cfg.email, &pdf);
+    if msg.to.is_none() {
+        let who = if inv.to.name.is_empty() {
+            "the client"
+        } else {
+            inv.to.name.as_str()
+        };
+        eprintln!(
+            "{} {who} has no `email`; the mail client will ask for the recipient",
+            est.yellow("warning:"),
+        );
+    }
+    if dry_run {
+        if stale {
+            println!("would build {}", pdf.display());
+        }
+        println!("To: {}", msg.to.as_deref().unwrap_or(""));
+        println!("Subject: {}", msg.subject);
+        println!("Attachment: {}", msg.attachment.display());
+        println!();
+        println!("{}", msg.body);
+        println!();
+        for (i, l) in send::commands(&msg, send::Platform::current())
+            .iter()
+            .enumerate()
+        {
+            let what = if i == 0 { "would run" } else { "fallback" };
+            println!("{what}: {}", l.display());
+        }
+        return Ok(ExitCode::SUCCESS);
+    }
+
+    let used = send::launch(&msg)?;
+    println!(
+        "{} {} to {}",
+        st.green_bold("opened"),
+        st.bold(&inv.number),
+        msg.to.as_deref().unwrap_or("(no recipient)")
+    );
+    if !used.attaches {
+        println!(
+            "attach the PDF by hand: {}",
+            st.bold(&msg.attachment.display().to_string())
+        );
+    }
+    if mark_sent {
+        let src = std::fs::read_to_string(&file)
+            .with_context(|| format!("reading {}", file.display()))?;
+        let text = send::mark_sent(&src, Local::now().date_naive())?;
+        std::fs::write(&file, text).with_context(|| format!("writing {}", file.display()))?;
+        println!("{} sent_on in {}", st.dim("recorded"), file.display());
+    }
+    Ok(ExitCode::SUCCESS)
 }
 
 fn cmd_new(
@@ -411,8 +603,13 @@ fn cmd_watch(config_path: Option<&Path>, file: &Path, output: Option<&Path>) -> 
     let rebuild = || {
         let stamp = Local::now().format("%H:%M:%S").to_string();
         print!("{} ", st.dim(&stamp));
-        let result =
-            load_config(config_path).and_then(|cfg| build(&cfg, &renderer, &file, output, None));
+        let result = load_config(config_path).and_then(|cfg| {
+            let opts = BuildOpts {
+                lock: false,
+                strict: false,
+            };
+            build(&cfg, &renderer, &file, output, None, opts)
+        });
         match result {
             Ok(Some(_)) => {}
             Ok(None) => println!("{}", st.red_bold("failed")),

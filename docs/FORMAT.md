@@ -145,6 +145,90 @@ about 7.9e28 is an error.
   standard mentions, not legal advice: check what your jurisdiction requires.
   `invgen build` (and the editor, on export) warns when an invoice charges no tax,
   sets no `tax_note` and the client has `tax` lines (such as a VAT ID).
+* `issued_hash`: written by invgen when the invoice is first exported; see
+  [Issued invoices](#issued-invoices-issued_hash). Do not write it by hand.
+* `sent_on`: `YYYY-MM-DD`, written by `invgen send --mark-sent`. Informational only.
+
+## Issued invoices (`issued_hash`)
+
+Once an invoice is sent it should not change. When a non-draft invoice is exported
+to PDF for the first time (`invgen build`, `invgen send`, or Export PDF / Send in the
+editor), invgen adds one line to its front matter:
+
+```yaml
+issued_hash: "3f2a9c4e1b7d6a05"
+```
+
+It is the first 16 hex digits of a SHA-256 over the fully resolved invoice: the JSON
+of the invoice model after config defaults, the client entry and every override are
+applied (sender, client, payment details, items, tax, dates, language, labels,
+template path...). The written `status`, `paid_on` and `sent_on` are left out, so
+marking an invoice as paid does not break the lock. If `number:` or `date:` is
+missing it is written too, since both would otherwise be resolved again on every
+build. Only that line (and those keys) is added; the rest of the file stays byte for
+byte. Drafts (`status: draft`) are never locked.
+
+On every later build the hash is computed again. When it differs, the invoice was
+issued and what a rebuild produces is no longer what was sent, whether the change
+came from the file or from the config (a new address, a new bank account):
+
+* `invgen build` prints a warning naming the invoice and suggesting a credit note,
+  and still builds. `invgen build --strict` refuses instead (exit status 1).
+* `invgen check` reports it as an error.
+* The editor shows a banner on locked invoices ("Issued invoice, edits change a
+  sent document"), in red when the content changed. Its **Unlock** button removes
+  `issued_hash` (save to keep that); the next export locks the invoice again.
+
+The first export is the one that counts: building a locked invoice again never
+updates the hash. `invgen watch` warns like `build` but never adds a lock, since it
+rebuilds while the invoice is still being written. To accept a change on purpose,
+delete the `issued_hash` line (or use Unlock) and export again.
+
+## Sending (`invgen send`)
+
+`invgen send FILE|NUMBER` builds the PDF when it is missing or older than the invoice
+file or the config (which also locks the invoice, see above), then opens the desktop
+mail client with:
+
+* **To**: the client's `email` (`clients.<key>.email`, or `to: email:` inline).
+  Without one, the mail client asks for the recipient.
+* **Subject** and **body** from the config's `email:` block, else built-in defaults in
+  the invoice language (`en`, `es`, `de`, `fr`, `it`, `pt`, `nl`).
+* **Attachment**: the PDF (`<number>.pdf` next to the invoice file).
+
+Placeholders in `email.subject` and `email.body`: `{number}`, `{total}` (e.g.
+`EUR 9,450.00`), `{due}` (`YYYY-MM-DD`, empty without a due date), `{client}` (client
+name) and `{from}` (your name). Unknown `{...}` text is kept as written. The subject
+is one line; line breaks in it become spaces.
+
+```yaml
+email:
+  subject: "Invoice {number} from {from}"
+  body: |
+    Hello,
+
+    please find attached invoice {number} for {total}, due {due}.
+
+    Best regards,
+    {from}
+```
+
+How the mail client is opened:
+
+* **Linux** (and other freedesktop systems): `xdg-email --subject ... --body ...
+  --attach <pdf> <to>`, which opens the default mail client with everything filled in.
+  If `xdg-email` is missing, a `mailto:` link is opened with `xdg-open` and the PDF
+  path is printed to attach by hand.
+* **macOS**: Mail, through `osascript`, with every field and the attachment. If that
+  fails, a `mailto:` link is opened with `open` and the PDF path is printed.
+* **Windows**: a `mailto:` link (opened through `explorer.exe`); mailto cannot carry
+  attachments, so the PDF path is printed.
+
+invgen never sends mail itself and never asks for or stores SMTP credentials: the
+message is only handed to your mail client, and you press Send there.
+`--dry-run` prints the message and the command instead of running anything;
+`--mark-sent` records `sent_on: <today>` in the front matter after the mail client
+opened. The editor's **Send** button exports the PDF and then does the same.
 
 ## Branding and languages
 
@@ -215,6 +299,9 @@ language: en                         # optional: en, es, de, fr, it, pt, nl
 labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
+email:                               # optional: `invgen send` message (see Sending)
+  subject: "Invoice {number}"
+  body: "Hello,\n\nplease find attached invoice {number} for {total}.\n\n{from}"
 from:
   name: Alex Morgan
   address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
@@ -231,6 +318,7 @@ clients:
     name: Northwind Labs SL
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
+    email: billing@example.com   # optional: recipient for `invgen send`
     currency: EUR      # optional per-client defaults
     tax_rate: 0
     tax_note: reverse_charge   # optional: EU B2B services without VAT
