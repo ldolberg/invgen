@@ -37,10 +37,8 @@ pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let parsed =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_invoice(&text, cfg)));
-        let entry = match parsed {
-            Ok(Ok(inv)) => Entry {
+        let entry = match parse_invoice(&text, cfg) {
+            Ok(inv) => Entry {
                 path: path.clone(),
                 number: inv.number.clone(),
                 client: inv.to.name.clone(),
@@ -48,7 +46,7 @@ pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
                 status: Some(inv.status),
                 date: Some(inv.date),
             },
-            _ => Entry {
+            Err(_) => Entry {
                 path: path.clone(),
                 number: stem,
                 client: "could not parse".into(),
