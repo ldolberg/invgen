@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Local};
 use clap::{Parser, Subcommand};
-use invgen::config::Config;
+use invgen::config::{Config, DEFAULT_CONFIG};
 use invgen::model::{Decimal, Invoice, Status, format_amount, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
@@ -100,6 +100,16 @@ enum Cmd {
         #[arg(long)]
         edit: bool,
     },
+    /// Work with typst templates (see docs/TEMPLATES.md).
+    Template {
+        /// Write the built-in template to PATH (stdout when PATH is omitted),
+        /// as a starting point for a custom `template:`.
+        #[arg(long, value_name = "PATH", num_args = 0..=1, required = true)]
+        export: Option<Option<PathBuf>>,
+        /// Overwrite PATH if it already exists.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
@@ -164,6 +174,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             cmd_check(&cfg, strict)
         }
         Some(Cmd::Config { edit }) => cmd_config(config_path.as_deref(), edit),
+        Some(Cmd::Template { export, force }) => cmd_template(export.flatten().as_deref(), force),
     }
 }
 
@@ -277,17 +288,7 @@ fn cmd_new(
         }
         bail!("unknown client `{key}` (known: {})", known.join(", "));
     }
-    let md = cfg.new_invoice_markdown(client);
-    let number = parse_invoice(&md, cfg)
-        .map(|inv| inv.number)
-        .unwrap_or_else(|_| cfg.next_number(Local::now().year()));
-    std::fs::create_dir_all(&cfg.invoices_dir)
-        .with_context(|| format!("creating {}", cfg.invoices_dir.display()))?;
-    let path = cfg.invoices_dir.join(format!("{}.md", sanitize(&number)));
-    if path.exists() {
-        bail!("{} already exists", path.display());
-    }
-    std::fs::write(&path, md).with_context(|| format!("writing {}", path.display()))?;
+    let path = cfg.write_new_invoice(client)?;
     println!("{}", path.display());
     if open {
         invgen::gui::run(Some(path), config_path)?;
@@ -583,39 +584,29 @@ fn cmd_check(cfg: &Config, strict: bool) -> Result<ExitCode> {
     })
 }
 
-const DEFAULT_CONFIG: &str = r#"# invgen configuration. See docs/FORMAT.md for the invoice format.
-# Static data lives here once; invoice files only say what changes.
+fn cmd_template(path: Option<&Path>, force: bool) -> Result<ExitCode> {
+    let Some(path) = path else {
+        print!("{}", invgen::render::TEMPLATE);
+        return Ok(ExitCode::SUCCESS);
+    };
+    if path.exists() && !force {
+        bail!(
+            "{} already exists (use --force to overwrite)",
+            path.display()
+        );
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(path, invgen::render::TEMPLATE)
+        .with_context(|| format!("writing {}", path.display()))?;
+    println!("{}", path.display());
+    Ok(ExitCode::SUCCESS)
+}
 
-invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports .pdf
-number_prefix: INV                   # numbers look like INV-<year>-<seq>
-currency: EUR
-tax_rate: 0                          # percent
-due_days: 14
-
-from:
-  name: Your Name
-  address: [Street 1, City, "00000", Country]
-  tax: ["VAT ID: XX00000000"]
-  email: you@example.com
-  # phone: "+00 000 000 000"
-
-payment:
-  holder: YOUR NAME
-  iban: XX00 0000 0000 0000 0000 00
-  bic: XXXXXXXXXXX
-  # notes: ["Bank name", "Please quote the invoice number"]
-
-clients:
-  acme:
-    name: ACME Corp
-    address: [Street 1, City, "00000", Country]
-    tax: ["Tax ID: X00000000"]
-    # currency: EUR      # optional per-client defaults
-    # tax_rate: 0
-    rate: 450            # default rate used by `invgen new`
-    unit: days
-    description: Consulting services
-"#;
+/// Editor for `invgen config --edit` when neither VISUAL nor EDITOR is set.
+const DEFAULT_EDITOR: &str = if cfg!(windows) { "notepad" } else { "nano" };
 
 fn cmd_config(config_path: Option<&Path>, edit: bool) -> Result<ExitCode> {
     let path = config_path
@@ -641,9 +632,9 @@ fn cmd_config(config_path: Option<&Path>, edit: bool) -> Result<ExitCode> {
                     .ok()
                     .filter(|s| !s.trim().is_empty())
             })
-            .unwrap_or_else(|| "nano".into());
+            .unwrap_or_else(|| DEFAULT_EDITOR.into());
         let mut parts = editor.split_whitespace();
-        let prog = parts.next().unwrap_or("nano");
+        let prog = parts.next().unwrap_or(DEFAULT_EDITOR);
         let status = std::process::Command::new(prog)
             .args(parts)
             .arg(&path)

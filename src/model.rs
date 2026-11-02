@@ -5,6 +5,8 @@ use chrono::NaiveDate;
 pub use rust_decimal::Decimal;
 use rust_decimal::RoundingStrategy;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 /// A postal party (sender or client).
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -17,6 +19,11 @@ pub struct Party {
     pub tax: Vec<String>,
     pub email: Option<String>,
     pub phone: Option<String>,
+    /// Logo image (SVG, PNG, JPEG, GIF or WebP) shown in the invoice header.
+    /// Only used for the sender (`from`). After parsing it is an absolute path
+    /// (`~` expanded, relative paths resolved against the config directory).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub logo: Option<PathBuf>,
 }
 
 /// How the client should pay.
@@ -104,6 +111,12 @@ pub struct Invoice {
     pub signature: Option<String>,
     /// Accent color as hex "#rrggbb" (default "#111827").
     pub accent: String,
+    /// Label language, a code from `render::i18n::SUPPORTED` (default "en").
+    pub language: String,
+    /// Per-key label overrides (config `labels:`), applied over `language`.
+    pub labels: BTreeMap<String, String>,
+    /// Custom typst template (absolute path). None uses the built-in one.
+    pub template: Option<PathBuf>,
 }
 
 impl Invoice {
@@ -356,6 +369,9 @@ mod tests {
             notes: vec![],
             signature: None,
             accent: "#111827".into(),
+            language: "en".into(),
+            labels: BTreeMap::new(),
+            template: None,
         }
     }
 
@@ -523,6 +539,9 @@ mod tests {
             notes: Vec::new(),
             signature: None,
             accent: "#111827".into(),
+            language: "en".into(),
+            labels: BTreeMap::new(),
+            template: None,
         }
     }
 

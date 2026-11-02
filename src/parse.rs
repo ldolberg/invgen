@@ -8,6 +8,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_yaml_ng::{Mapping, Value};
 use std::ops::Range;
+use std::path::Path;
+
+use crate::render::i18n;
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[error("line {line}: {message}")]
@@ -29,7 +32,6 @@ impl ParseError {
 type Result<T> = std::result::Result<T, ParseError>;
 
 const DEFAULT_ACCENT: &str = "#111827";
-const DEFAULT_TAX_LABEL: &str = "VAT";
 
 /// Parse an invoice. `cfg` supplies defaults (sender, payment, clients, numbering).
 pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
@@ -73,7 +75,8 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         None => None,
     };
 
-    let from = fm.overlay("from", &cfg.from)?;
+    let mut from: Party = fm.overlay("from", &cfg.from)?;
+    from.logo = from.logo.as_deref().map(|p| cfg.resolve_path(p));
     let base_to = client.map(|c| c.party.clone()).unwrap_or_default();
     let to: Party = fm.overlay("to", &base_to)?;
     let payment: Payment = fm.overlay("payment", &cfg.payment)?;
@@ -137,9 +140,33 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         .number("tax_rate")?
         .or_else(|| client.and_then(|c| c.tax_rate))
         .unwrap_or(cfg.tax_rate);
+    let language = match fm.str("language")? {
+        Some(l) => {
+            i18n::normalize_language(&l).map_err(|m| ParseError::new(fm.line_of("language"), m))?
+        }
+        None => match client.and_then(|c| c.language.as_deref()) {
+            Some(l) => i18n::normalize_language(l).map_err(|m| {
+                ParseError::new(fm.line_of("client"), format!("client language: {m}"))
+            })?,
+            None => i18n::normalize_language(&cfg.language).map_err(|m| {
+                let line = if fm.get("config").is_some() {
+                    fm.line_of("config")
+                } else {
+                    0
+                };
+                ParseError::new(line, format!("config language: {m}"))
+            })?,
+        },
+    }
+    .to_string();
+    let labels = cfg.labels.clone();
+    let template = match fm.str("template")? {
+        Some(t) if !t.trim().is_empty() => Some(cfg.resolve_path(Path::new(t.trim()))),
+        _ => cfg.template.as_deref().map(|p| cfg.resolve_path(p)),
+    };
     let tax_label = fm
         .str("tax_label")?
-        .unwrap_or_else(|| DEFAULT_TAX_LABEL.into());
+        .unwrap_or_else(|| i18n::label(&language, "tax", &labels));
     let accent = match fm.str("accent")? {
         None => DEFAULT_ACCENT.to_string(),
         Some(a) => normalize_hex(&a).ok_or_else(|| {
@@ -179,6 +206,9 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         notes: body.notes,
         signature,
         accent,
+        language,
+        labels,
+        template,
     };
     if invoice.checked_total().is_none() {
         return Err(ParseError::new(
@@ -938,6 +968,7 @@ fn override_config(cfg: &Config, over: &Mapping) -> std::result::Result<Config, 
     let mut merged: Config =
         serde_yaml_ng::from_value(value).map_err(|e| format!("config override: {e}"))?;
     merged.invoices_dir = crate::config::expand_tilde(&merged.invoices_dir);
+    merged.dir = cfg.dir.clone();
     Ok(merged)
 }
 
@@ -1010,6 +1041,7 @@ mod tests {
             tax: vec!["VAT ID: LU12345678".into()],
             email: Some("alex@example.com".into()),
             phone: Some("+352 600 000 000".into()),
+            logo: None,
         };
         cfg.payment = Payment {
             holder: Some("ALEX MORGAN".into()),
@@ -1031,6 +1063,7 @@ mod tests {
                 rate: Some(d("450")),
                 unit: Some("days".into()),
                 description: Some("Senior Software Engineer".into()),
+                language: None,
             },
         );
         cfg.clients.insert("acme".into(), ClientConfig::default());
@@ -1394,5 +1427,107 @@ please.
             .unwrap_err();
             assert_eq!(err.line, 3, "{err}");
         }
+    }
+
+    #[test]
+    fn language_precedence_front_matter_client_config() {
+        let mut c = cfg();
+        c.language = "de".into();
+        let src = "---\nclient: northwind\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.language, "de");
+        assert_eq!(inv.tax_label, "USt.");
+
+        c.clients.get_mut("northwind").unwrap().language = Some("ES".into());
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.language, "es");
+        assert_eq!(inv.tax_label, "IVA");
+
+        let src = "---\nclient: northwind\nlanguage: fr-BE\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.language, "fr");
+        assert_eq!(inv.tax_label, "TVA");
+
+        // An explicit tax_label still wins over the translated default.
+        let src = "---\nlanguage: es\ntax_label: IGIC\n---\n- A: 1 @ 1\n";
+        assert_eq!(parse_invoice(src, &c).unwrap().tax_label, "IGIC");
+
+        // Default is English.
+        assert_eq!(parse("- A: 1 @ 1\n").unwrap().language, "en");
+        assert_eq!(parse("- A: 1 @ 1\n").unwrap().tax_label, "VAT");
+    }
+
+    #[test]
+    fn unknown_language_is_an_error_listing_supported() {
+        let err = parse("---\ndate: 2026-03-01\nlanguage: klingon\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(err.message.contains("klingon"), "{err}");
+        assert!(err.message.contains("en, es, de, fr, it, pt, nl"), "{err}");
+
+        let mut c = cfg();
+        c.clients.get_mut("northwind").unwrap().language = Some("xx".into());
+        let err = parse_invoice("---\nclient: northwind\n---\n- A: 1 @ 1\n", &c).unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("`xx`"), "{err}");
+
+        let err = parse("---\nconfig:\n  language: zz\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("`zz`"), "{err}");
+    }
+
+    #[test]
+    fn labels_come_from_config_and_config_block() {
+        let mut c = cfg();
+        c.labels.insert("bill_to".into(), "Customer".into());
+        let inv = parse_invoice("- A: 1 @ 1\n", &c).unwrap();
+        assert_eq!(inv.labels["bill_to"], "Customer");
+        c.labels.insert("tax".into(), "Sales tax".into());
+        let src = "---\nconfig:\n  labels:\n    notes: Remarks\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.labels["bill_to"], "Customer");
+        assert_eq!(inv.labels["notes"], "Remarks");
+        // A `tax` label override is the default tax label.
+        assert_eq!(inv.tax_label, "Sales tax");
+    }
+
+    #[test]
+    fn logo_and_template_paths_resolve_against_config_dir() {
+        let mut c = cfg();
+        c.dir = Some("/cfg/dir".into());
+        c.from.logo = Some("brand/logo.svg".into());
+        c.template = Some("tpl/invoice.typ".into());
+        let inv = parse_invoice("- A: 1 @ 1\n", &c).unwrap();
+        assert_eq!(
+            inv.from.logo.as_deref(),
+            Some(Path::new("/cfg/dir/brand/logo.svg"))
+        );
+        assert_eq!(
+            inv.template.as_deref(),
+            Some(Path::new("/cfg/dir/tpl/invoice.typ"))
+        );
+
+        // Front matter overrides, via `from:`, `config:` and `template:`.
+        let src = "---\nfrom:\n  logo: /abs/other.png\ntemplate: ~/t.typ\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.from.logo.as_deref(), Some(Path::new("/abs/other.png")));
+        assert_eq!(
+            inv.template.as_deref(),
+            Some(crate::config::expand_tilde(Path::new("~/t.typ")).as_path())
+        );
+        assert!(!inv.template.as_ref().unwrap().starts_with("~"));
+
+        let src = "---\nconfig:\n  from:\n    logo: x.png\n  template: y.typ\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.from.logo.as_deref(), Some(Path::new("/cfg/dir/x.png")));
+        assert_eq!(inv.template.as_deref(), Some(Path::new("/cfg/dir/y.typ")));
+
+        // `logo: null` removes the config logo for one invoice.
+        let src = "---\nfrom:\n  logo: null\n---\n- A: 1 @ 1\n";
+        assert_eq!(parse_invoice(src, &c).unwrap().from.logo, None);
+
+        // No logo and no template by default.
+        let inv = parse("- A: 1 @ 1\n").unwrap();
+        assert_eq!(inv.from.logo, None);
+        assert_eq!(inv.template, None);
     }
 }

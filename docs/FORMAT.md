@@ -13,8 +13,10 @@ status: pending               # pending | paid | overdue | draft
 client: northwind       # key into config `clients:`  ...or an inline `to:` block
 currency: EUR                 # optional: falls back to client currency, then config default
 tax_rate: 0                   # percent; optional, falls back to client, then config
-tax_label: VAT                # optional
+tax_label: VAT                # optional: defaults to the translated "VAT" label
 accent: "#111827"             # optional
+language: en                  # optional: en, es, de, fr, it, pt, nl
+template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
 ---
 
 # Senior Software Engineer
@@ -99,7 +101,32 @@ about 7.9e28 is an error.
   shows as `overdue` with the days late (`overdue 12d`). Any other written status
   wins, and an invoice without a due date (`due: false`) is never overdue automatically.
 * `signature`: defaults to `from.name`; `false` hides it, a string replaces it.
-* `tax_label` defaults to `VAT`; `accent` defaults to `#111827` (`#rgb` or `#rrggbb`).
+* `tax_label` defaults to the `tax` label of the invoice language (`VAT`, `IVA`,
+  `USt.`, `TVA`, `Btw`...); `accent` defaults to `#111827` (`#rgb` or `#rrggbb`).
+* `language`: front matter, then the client, then the config, default `en`. Supported:
+  `en`, `es`, `de`, `fr`, `it`, `pt`, `nl` (case-insensitive; a region suffix such as
+  `fr-BE` is accepted and ignored). Any other value is an error listing these. The
+  language changes every label on the invoice (headings, column names, status);
+  dates and amounts keep their format.
+* `template`: front matter, then the config; none means the built-in template.
+
+## Branding and languages
+
+* **Logo**: `from.logo` (SVG, PNG, JPEG, GIF or WebP) is drawn top-left in the header,
+  scaled to fit 14 mm high by 60 mm wide with its aspect ratio kept. Set it in the
+  config (`from:` then `logo: logo.svg`) or per invoice with `from:` / `config: from:`
+  in the front matter; `logo: null` removes it for one invoice. A missing or unreadable
+  file, or one that is not the image type its extension says, is an error naming the path.
+* **Paths** (`from.logo`, `template`) may start with `~`. Relative paths are resolved
+  against the directory of the config file, wherever they are written (config or front
+  matter). In the Flatpak build, keep these files in the config directory
+  (`~/.config/invgen`) or under `~/Documents`, which the sandbox can read.
+* **Labels**: `labels:` in the config replaces single labels whatever the language,
+  e.g. `labels: {bill_to: Customer, tax: Sales tax}`. The keys are listed in
+  [TEMPLATES.md](TEMPLATES.md#labels); a key a language does not define falls back
+  to English. Use `config: labels:` in the front matter to change one invoice only.
+* **Templates**: see [TEMPLATES.md](TEMPLATES.md) for writing your own and the data
+  it receives. `invgen template --export FILE.typ` writes the built-in one.
 
 ## Front matter overrides
 
@@ -147,12 +174,17 @@ number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
 currency: EUR
 tax_rate: 0
 due_days: 14
+language: en                         # optional: en, es, de, fr, it, pt, nl
+labels:                              # optional: override single labels
+  bill_to: Customer
+template: ~/invgen/my-invoice.typ    # optional: custom typst template
 from:
   name: Alex Morgan
   address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
   tax: ["VAT ID: LU12345678", "Tax ID: R.C.S. Luxembourg B000000 Business Permit 00000000/0"]
   email: alex@example.com
   phone: "+352 600 000 000"
+  logo: logo.svg                     # optional: relative to this file
 payment:
   holder: ALEX MORGAN
   iban: DE89 3704 0044 0532 0130 00
@@ -164,6 +196,7 @@ clients:
     tax: ["Tax ID: B12345678"]
     currency: EUR      # optional per-client defaults
     tax_rate: 0
+    language: es       # optional: invoices for this client in Spanish
     rate: 450          # default rate used by templates
     unit: days
     description: Senior Software Engineer
@@ -179,3 +212,14 @@ and formats it with at least two digits: `EINV-2026-01` for an empty directory.
 The invoice library is `invoices_dir` plus up to two levels of subfolders
 (`Invoices/2026/`, `Invoices/clients/acme/`); hidden folders such as `.git` are
 skipped. `invgen list`, the editor sidebar and next-number scanning all use it.
+
+The editor's first-run setup and its Clients window write to this file in place:
+only the lines of the keys they change are rewritten (a key's trailing `# comment`
+is kept), new keys go at the end of their block, and everything else stays byte for
+byte. They write values in the same style as above (plain scalars, quoted when
+YAML would read them as something else, lists as `[a, b]`). Client keys must be
+plain YAML keys: letters, digits, `-`, `_` and `.`, starting with a letter or digit.
+Before writing, the result is parsed again and checked; the previous file is kept as
+`config.yaml.bak`. Files the editor cannot change safely (flow mappings like
+`clients: {acme: {...}}`, anchors and aliases, tags, several documents) are never
+rewritten; edit those by hand.

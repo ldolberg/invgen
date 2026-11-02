@@ -773,6 +773,9 @@ mod tests {
                 notes: vec![],
                 signature: None,
                 accent: "#111827".into(),
+                language: "en".into(),
+                labels: Default::default(),
+                template: None,
             },
         }
     }
