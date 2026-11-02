@@ -11,6 +11,16 @@ invoice is a few lines.
 
 ## Install
 
+Flatpak (any distro, auto-updates with `flatpak update`):
+
+```sh
+flatpak install --user https://ldolberg.github.io/invgen/io.github.ldolberg.invgen.flatpakref
+```
+
+The app reads the same `~/.config/invgen/config.yaml` as the native build and has
+access to `~/Documents`; open files elsewhere through the file chooser. Install page:
+<https://ldolberg.github.io/invgen/>.
+
 Prebuilt (x86_64 Linux): grab the tarball from
 [Releases](https://github.com/ldolberg/invgen/releases), then
 

@@ -49,11 +49,18 @@ impl Default for Config {
 
 impl Config {
     /// ~/.config/invgen/config.yaml
+    ///
+    /// Inside a Flatpak sandbox `XDG_CONFIG_HOME` points at the app's private
+    /// `~/.var/app/<id>/config`, so the real `~/.config` is used instead (the
+    /// manifest grants access to `xdg-config/invgen`). That way the native and
+    /// the Flatpak builds share one config.
     pub fn path() -> PathBuf {
-        dirs::config_dir()
-            .unwrap_or_else(|| home().join(".config"))
-            .join("invgen")
-            .join("config.yaml")
+        let base = if std::env::var_os("FLATPAK_ID").is_some() {
+            home().join(".config")
+        } else {
+            dirs::config_dir().unwrap_or_else(|| home().join(".config"))
+        };
+        base.join("invgen").join("config.yaml")
     }
 
     /// Load from `path()`; returns Default if the file does not exist. `~` in invoices_dir is expanded.

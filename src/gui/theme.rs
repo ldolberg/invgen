@@ -253,33 +253,19 @@ fn load(path: Option<PathBuf>) -> Option<FontData> {
     Some(FontData::from_owned(bytes))
 }
 
-/// Load Inter (UI) and JetBrains Mono / Fira Mono (editor) from the system,
+/// Use the bundled Inter for the UI and JetBrains Mono / Fira Mono (editor) from the system,
 /// keeping egui's bundled fonts as fallbacks for missing glyphs.
 pub fn install_fonts(ctx: &egui::Context) {
     let mut defs = FontDefinitions::default();
 
-    let ui_regular = load(find_font(
-        "Inter",
-        "Regular",
-        &[
-            "/usr/share/fonts/opentype/inter/Inter-Regular.otf",
-            "/usr/share/fonts/truetype/inter/Inter-Regular.ttf",
-            "/usr/share/fonts/inter/Inter-Regular.otf",
-            "~/.local/share/fonts/Inter-Regular.ttf",
-            "~/.local/share/fonts/Inter-Regular.otf",
-        ],
-    ));
-    let ui_strong = load(find_font(
-        "Inter",
-        "SemiBold",
-        &[
-            "/usr/share/fonts/opentype/inter/Inter-SemiBold.otf",
-            "/usr/share/fonts/truetype/inter/Inter-SemiBold.ttf",
-            "/usr/share/fonts/inter/Inter-SemiBold.otf",
-            "~/.local/share/fonts/Inter-SemiBold.ttf",
-            "~/.local/share/fonts/Inter-SemiBold.otf",
-        ],
-    ));
+    // Inter ships inside the binary (assets/fonts, also used by the PDF renderer),
+    // so the UI looks the same everywhere, including inside a Flatpak sandbox.
+    let ui_regular = Some(FontData::from_static(include_bytes!(
+        "../../assets/fonts/Inter-Regular.otf"
+    )));
+    let ui_strong = Some(FontData::from_static(include_bytes!(
+        "../../assets/fonts/Inter-SemiBold.otf"
+    )));
     let mono = load(
         find_font(
             "JetBrains Mono",

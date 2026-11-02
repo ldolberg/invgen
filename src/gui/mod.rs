@@ -17,11 +17,11 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
 use worker::{Job, Outcome, Worker};
 
-pub const APP_ID: &str = "io.github.invgen";
+pub const APP_ID: &str = "io.github.ldolberg.invgen";
 const DEBOUNCE: Duration = Duration::from_millis(150);
 const STORAGE_KEY: &str = "invgen-prefs";
 
-/// Window icon, rasterized from packaging/io.github.invgen.svg.
+/// Window icon, rasterized from packaging/io.github.ldolberg.invgen.svg.
 const ICON_PNG: &[u8] = include_bytes!("../../assets/icon.png");
 
 fn window_icon() -> Option<egui::IconData> {

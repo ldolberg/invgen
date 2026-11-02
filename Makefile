@@ -4,7 +4,7 @@ PREFIX   ?= $(HOME)/.local
 BINDIR   ?= $(PREFIX)/bin
 APPDIR   ?= $(PREFIX)/share/applications
 ICONDIR  ?= $(PREFIX)/share/icons/hicolor/scalable/apps
-APP_ID   := io.github.invgen
+APP_ID   := io.github.ldolberg.invgen
 CARGO    ?= cargo
 
 .PHONY: all build test install uninstall fmt lint clean
@@ -52,3 +52,32 @@ dist:
 	cd dist && tar czf invgen-v$(VERSION)-x86_64-linux.tar.gz invgen-v$(VERSION)-x86_64-linux && sha256sum invgen-v$(VERSION)-x86_64-linux.tar.gz > invgen-v$(VERSION)-x86_64-linux.tar.gz.sha256
 
 .PHONY: dist
+
+# Flatpak (needs: flatpak install --user flathub org.flatpak.Builder
+#   org.freedesktop.Sdk//25.08 org.freedesktop.Sdk.Extension.rust-stable//25.08)
+FLATPAK_MANIFEST := packaging/flatpak/$(APP_ID).yml
+FLATPAK_BUILDER  := flatpak run --env=FLATPAK_USER_DIR=$(HOME)/.local/share/flatpak --command=flatpak-builder org.flatpak.Builder --disable-rofiles-fuse
+
+# Regenerate offline cargo sources after Cargo.lock changes.
+flatpak-sources:
+	curl -fsSLo build-flatpak-gen.py https://raw.githubusercontent.com/flatpak/flatpak-builder-tools/master/cargo/flatpak-cargo-generator.py
+	uv run --no-project --with aiohttp --with tomlkit python build-flatpak-gen.py Cargo.lock -o packaging/flatpak/cargo-sources.json
+	rm -f build-flatpak-gen.py
+
+# Build and install for the current user.
+flatpak:
+	$(FLATPAK_BUILDER) --user --install --force-clean build-flatpak $(FLATPAK_MANIFEST)
+
+# Single-file bundle for releases: dist/invgen-v$(VERSION).flatpak
+flatpak-bundle:
+	$(FLATPAK_BUILDER) --force-clean --repo=build-flatpak-repo build-flatpak $(FLATPAK_MANIFEST)
+	mkdir -p dist
+	flatpak build-bundle build-flatpak-repo dist/invgen-v$(VERSION).flatpak $(APP_ID) --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+
+.PHONY: flatpak flatpak-bundle flatpak-sources
+
+# Publish to the self-hosted Flatpak repo (gh-pages, https://ldolberg.github.io/invgen/).
+flatpak-publish:
+	packaging/flatpak/publish.sh
+
+.PHONY: flatpak-publish

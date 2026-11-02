@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.ldolberg.invgen</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <name>invgen</name>
+  <summary>Write invoices in markdown, export clean PDFs</summary>
+  <developer id="io.github.ldolberg">
+    <name>invgen contributors</name>
+  </developer>
+  <description>
+    <p>
+      invgen turns short markdown files into polished A4 invoice PDFs. Your details,
+      bank account and clients live once in a config file, so each invoice is just a
+      few lines: a client key and a table of line items.
+    </p>
+    <ul>
+      <li>Live preview of the exact PDF as you type</li>
+      <li>Syntax highlighted editor with inline error messages</li>
+      <li>Automatic invoice numbering, totals and VAT</li>
+      <li>Invoice library sidebar with status and amounts</li>
+      <li>Per-invoice overrides of any config value</li>
+      <li>Command line tools to build, watch and list invoices</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.ldolberg.invgen.desktop</launchable>
+  <icon type="stock">io.github.ldolberg.invgen</icon>
+  <url type="homepage">https://github.com/ldolberg/invgen</url>
+  <url type="bugtracker">https://github.com/ldolberg/invgen/issues</url>
+  <url type="vcs-browser">https://github.com/ldolberg/invgen</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Markdown editor with live PDF preview</caption>
+      <image>https://raw.githubusercontent.com/ldolberg/invgen/main/docs/screenshot.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Generated invoice</caption>
+      <image>https://raw.githubusercontent.com/ldolberg/invgen/main/docs/sample-invoice.png</image>
+    </screenshot>
+  </screenshots>
+  <categories>
+    <category>Office</category>
+    <category>Finance</category>
+  </categories>
+  <keywords>
+    <keyword>invoice</keyword>
+    <keyword>pdf</keyword>
+    <keyword>markdown</keyword>
+    <keyword>billing</keyword>
+  </keywords>
+  <content_rating type="oars-1.1"/>
+  <supports>
+    <control>keyboard</control>
+    <control>pointing</control>
+  </supports>
+  <requires>
+    <display_length compare="ge">768</display_length>
+  </requires>
+  <releases>
+    <release version="0.1.2" date="2026-11-02">
+      <description>
+        <p>Flatpak packaging. The UI font is now bundled, and the app ID is io.github.ldolberg.invgen.</p>
+      </description>
+    </release>
+    <release version="0.1.1" date="2026-11-02">
+      <description>
+        <p>Per-invoice config overrides with a config block, and a clear error for a duplicated front matter block.</p>
+      </description>
+    </release>
+    <release version="0.1.0" date="2026-11-02">
+      <description>
+        <p>First release.</p>
+      </description>
+    </release>
+  </releases>
+</component>

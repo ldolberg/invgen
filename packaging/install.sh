@@ -4,8 +4,8 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 prefix=${PREFIX:-$HOME/.local}
 install -Dm755 "$here/invgen" "$prefix/bin/invgen"
-install -Dm644 "$here/io.github.invgen.desktop" "$prefix/share/applications/io.github.invgen.desktop"
-install -Dm644 "$here/io.github.invgen.svg" "$prefix/share/icons/hicolor/scalable/apps/io.github.invgen.svg"
+install -Dm644 "$here/io.github.ldolberg.invgen.desktop" "$prefix/share/applications/io.github.ldolberg.invgen.desktop"
+install -Dm644 "$here/io.github.ldolberg.invgen.svg" "$prefix/share/icons/hicolor/scalable/apps/io.github.ldolberg.invgen.svg"
 command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database -q "$prefix/share/applications" || true
 command -v gtk-update-icon-cache >/dev/null 2>&1 && gtk-update-icon-cache -q -t "$prefix/share/icons/hicolor" || true
 echo "installed $prefix/bin/invgen (make sure $prefix/bin is on your PATH)"

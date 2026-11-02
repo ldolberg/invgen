@@ -2,3 +2,7 @@
 *.pdf
 !docs/*.pdf
 /dist
+/build-flatpak
+/build-flatpak-repo
+/.flatpak-builder
+/build-pages
