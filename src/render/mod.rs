@@ -10,6 +10,7 @@
 //! the built-in one and receives the same data; see docs/TEMPLATES.md.
 
 mod data;
+pub mod epc;
 pub mod i18n;
 pub mod locale;
 mod world;
@@ -112,8 +113,19 @@ impl Renderer {
             }
             None => None,
         };
+        // A skipped QR code is silent here; `invgen build` warns via `epc::warning`.
+        let qr = match epc::check(inv)
+            .and_then(Result::ok)
+            .and_then(|p| epc::svg(&p))
+        {
+            Some(svg) => {
+                files.push((virtual_file(QR_PATH), Bytes::from_string(svg)));
+                Some(QR_PATH.to_string())
+            }
+            None => None,
+        };
         let json =
-            serde_json::to_vec(&data::View::new(inv, logo)).context("serializing invoice")?;
+            serde_json::to_vec(&data::View::new(inv, logo, qr)).context("serializing invoice")?;
         files.push((virtual_file("/invoice.json"), Bytes::new(json)));
 
         let (source, root) = match &inv.template {
@@ -144,6 +156,9 @@ impl Renderer {
         })
     }
 }
+
+/// Virtual path the EPC payment QR code (SVG) is served at.
+const QR_PATH: &str = "/epc-qr.svg";
 
 /// Image formats typst can embed, by file extension.
 const LOGO_FORMATS: &[&str] = &["svg", "png", "jpg", "jpeg", "gif", "webp"];

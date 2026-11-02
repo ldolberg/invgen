@@ -70,7 +70,8 @@ The copy changes only what belongs to one invoice:
 - `number` is the next free number and `date` is today;
 - an explicit `due:` date is removed, so the due date is computed again from
   `due_days` (`due: false` and `due_days` are kept);
-- `status` becomes `pending` and `paid_on` is removed;
+- `status` becomes `pending`; `paid_on`, `sent_on` and the issued lock
+  (`issued_hash`) are removed;
 - in the body, a month with its year (`October 2026`, `Oct 2026`) or a
   `YYYY-MM` period (`2026-10`) that refers to the source invoice's month or the
   month before it moves forward by the number of months since the source date
@@ -80,7 +81,7 @@ The copy changes only what belongs to one invoice:
 
 Quantities are copied as they are, so check the number of days.
 
-## `invgen build FILE.md [-o OUT.pdf] [--png DIR]`
+## `invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]`
 
 Renders one invoice.
 
@@ -88,16 +89,87 @@ Renders one invoice.
 |---|---|
 | `-o`, `--output OUT.pdf` | Where to write the PDF. Default: `<number>.pdf` in the same folder as `FILE.md`. Missing parent folders are created. |
 | `--png DIR` | Also write a PNG of every page into `DIR` (144 dpi): `<number>.png`, or `<number>-1.png`, `<number>-2.png`, ... for multi-page invoices. |
+| `--strict` | Refuse to build an issued invoice whose content changed (exit status 1) instead of warning. |
 
 On success it prints one line with the number, client, total and output path.
 On a parse error it prints the error and exits with status 1.
+
+The first build of a non-draft invoice **locks** it: invgen adds an
+`issued_hash: "..."` line to its front matter, a short hash of everything the
+invoice resolves to (your details from the config, the client, items, tax,
+dates). If a later build resolves to something else, because the file was edited
+or the config changed (a new address, a new bank account), `build` warns that the
+issued invoice changed and suggests a credit note:
+
+```text
+EINV-2026-23.md: warning: invoice EINV-2026-23 was issued and its resolved content changed since (an edit in the file or in the config, e.g. a new address). The PDF you sent no longer matches. Prefer a credit note and a new invoice; to accept the change, remove `issued_hash` from the front matter
+  issued_hash: recorded 3f2a9c4e1b7d6a05, now 81c0d2e4f5a69b37 (building anyway; --strict refuses)
+```
+
+Changing `status` (for example to `paid`) does not break the lock, and drafts are
+never locked. Delete the `issued_hash` line to accept a change on purpose. See
+[the format reference](format.md) and docs/FORMAT.md for the details.
 
 ## `invgen watch FILE.md [-o OUT.pdf]`
 
 Builds the PDF once, then again every time `FILE.md` is saved, until you press
 Ctrl+C. The config is read again on every rebuild, so config edits are picked
 up too. A failed build prints the error and keeps watching. `-o` works as in
-`build`. See the [watch mode recipe](recipes/watch.md).
+`build`. See the [watch mode recipe](recipes/watch.md). Unlike `build`, `watch`
+never locks an invoice (it warns about a changed issued invoice, though).
+
+## `invgen send FILE|NUMBER [--dry-run] [--mark-sent]`
+
+Emails an invoice through your own mail client. The argument is a markdown file,
+or an invoice number in the invoices directory (`EINV-2026-23`, or just `23`).
+
+1. If `<number>.pdf` is missing, or older than the invoice file or the config, it
+   is built first (exactly like `build`, so the invoice gets locked).
+2. The desktop mail client opens with the client's `email` as recipient, a subject
+   and a body, and the PDF attached. Review it there and press Send.
+
+| Option | Meaning |
+|---|---|
+| `--dry-run` | Print the message and the command that would be run; build and open nothing. |
+| `--mark-sent` | After the mail client opened, record `sent_on: <today>` in the front matter. |
+
+The subject and body come from the `email:` block of the config, with the
+placeholders `{number}`, `{total}`, `{due}`, `{client}` and `{from}`:
+
+```yaml
+email:
+  subject: "Invoice {number}"
+  body: |
+    Hello,
+
+    please find attached invoice {number} for {total}, due {due}.
+
+    Best regards,
+    {from}
+```
+
+Without that block, built-in texts in the invoice language are used (English,
+Spanish, German, French, Italian, Portuguese or Dutch).
+
+| Platform | How the mail client opens |
+|---|---|
+| Linux | `xdg-email` with recipient, subject, body and the PDF attached. Without `xdg-email`, a `mailto:` link (attach the printed PDF path by hand). |
+| macOS | Mail, through `osascript`, with everything filled in and the PDF attached. If that fails, a `mailto:` link and the printed PDF path. |
+| Windows | A `mailto:` link in the default mail client; attach the printed PDF path by hand (mailto cannot carry attachments). |
+
+invgen never sends mail itself and never stores SMTP credentials or passwords.
+
+```console
+$ invgen send 23 --dry-run
+To: billing@example.com
+Subject: Invoice EINV-2026-23
+Attachment: /home/alex/Documents/Invoices/EINV-2026-23.pdf
+
+Hello,
+...
+would run: xdg-email --utf8 --subject 'Invoice EINV-2026-23' ...
+fallback: xdg-open 'mailto:billing@example.com?subject=...'
+```
 
 ## `invgen list`
 
@@ -174,7 +246,9 @@ Errors:
 - a duplicate number, or the same sequence number used twice under one prefix
   (sequences are global across years, so `EINV-2025-5` and `EINV-2026-05` collide);
 - a higher number dated before a lower one (drafts are ignored here);
-- an invoice whose client has no name.
+- an invoice whose client has no name;
+- an issued invoice (with `issued_hash`) whose resolved content changed since it
+  was exported, see [`build`](#invgen-build-filemd--o-outpdf---png-dir---strict).
 
 Warnings:
 
@@ -230,5 +304,7 @@ replaced with `--force`. The data a template receives is documented in
 ## Exit status
 
 `0` on success, `1` on any error (bad arguments, unreadable files, a parse error,
-a skipped file in `list`, problems found by `check`, an invalid config after
+a skipped file in `list`, problems found by `check`, a changed issued invoice
+with `build --strict`, a mail client that cannot be opened by `send`, an invalid
+config after
 `config --edit`).

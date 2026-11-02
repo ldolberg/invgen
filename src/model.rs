@@ -36,6 +36,11 @@ pub struct Payment {
     pub bic: Option<String>,
     /// Extra free-form lines (bank name, reference instructions...).
     pub notes: Vec<String>,
+    /// Print an EPC (SEPA credit transfer) QR code next to the payment
+    /// details. Only rendered for EUR invoices with a valid IBAN and a
+    /// positive total; see `render::epc`.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub qr: bool,
 }
 
 /// One billable line.
