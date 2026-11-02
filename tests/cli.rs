@@ -469,6 +469,108 @@ fn build_missing_file_fails() {
         .stderr(predicate::str::contains("does-not-exist.md"));
 }
 
+// ---------------------------------------------------------------- e-invoices
+
+/// `INVOICE` with the client data Peppol needs.
+fn e_invoice() -> String {
+    INVOICE.replace(
+        "client: northwind\n",
+        "client: northwind\nbuyer_reference: PO-1\nto:\n  vat_id: ESB12345678\n",
+    )
+}
+
+fn count(hay: &[u8], needle: &[u8]) -> usize {
+    hay.windows(needle.len()).filter(|w| *w == needle).count()
+}
+
+#[test]
+fn build_facturx_embeds_the_xml_in_a_pdfa3() {
+    let env = Env::with_config();
+    let md = env.invoice("INV-2025-7.md", &e_invoice());
+    env.cmd()
+        .args(["build", md.to_str().unwrap(), "--facturx"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(Factur-X)"));
+    let pdf = fs::read(env.invoices().join("INV-2025-7.pdf")).unwrap();
+    assert_eq!(count(&pdf, b"<pdfaid:part>3</pdfaid:part>"), 1);
+    assert_eq!(count(&pdf, b"/UF(factur-x.xml)"), 1);
+    assert_eq!(count(&pdf, b"/AFRelationship/Alternative"), 1);
+    assert_eq!(
+        count(&pdf, b"<fx:ConformanceLevel>EN 16931</fx:ConformanceLevel>"),
+        1
+    );
+    // No UBL unless asked.
+    assert!(!env.invoices().join("INV-2025-7.xml").exists());
+}
+
+#[test]
+fn build_ubl_writes_xml_next_to_the_pdf() {
+    let env = Env::with_config();
+    let md = env.invoice("INV-2025-7.md", &e_invoice());
+    let out = env.path("out/custom.pdf");
+    env.cmd()
+        .args(["build", md.to_str().unwrap(), "--ubl", "-o"])
+        .arg(&out)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("(UBL)"));
+    assert!(is_pdf(&out));
+    let pdf = fs::read(&out).unwrap();
+    assert_eq!(count(&pdf, b"factur-x.xml"), 0, "plain PDF expected");
+    let xml = fs::read_to_string(env.path("out/custom.xml")).unwrap();
+    assert!(xml.contains("<cbc:ID>INV-2025-7</cbc:ID>"), "{xml}");
+    assert!(xml.contains("urn:fdc:peppol.eu:2017:poacc:billing:3.0"));
+    assert!(xml.contains("<cbc:BuyerReference>PO-1</cbc:BuyerReference>"));
+    assert!(xml.contains("<cbc:EndpointID schemeID=\"9920\">ESB12345678</cbc:EndpointID>"));
+}
+
+#[test]
+fn build_e_invoice_from_config_and_opt_out() {
+    let env = Env::with_config();
+    let cfg = fs::read_to_string(env.config()).unwrap();
+    fs::write(env.config(), format!("e_invoice: [facturx, ubl]\n{cfg}")).unwrap();
+    let md = env.invoice("INV-2025-7.md", &e_invoice());
+    env.cmd()
+        .args(["build", md.to_str().unwrap()])
+        .assert()
+        .success();
+    let pdf = fs::read(env.invoices().join("INV-2025-7.pdf")).unwrap();
+    assert_eq!(count(&pdf, b"/UF(factur-x.xml)"), 1);
+    assert!(env.invoices().join("INV-2025-7.xml").is_file());
+
+    fs::remove_file(env.invoices().join("INV-2025-7.xml")).unwrap();
+    env.cmd()
+        .args(["build", md.to_str().unwrap(), "--no-e-invoice"])
+        .assert()
+        .success();
+    let pdf = fs::read(env.invoices().join("INV-2025-7.pdf")).unwrap();
+    assert_eq!(count(&pdf, b"factur-x.xml"), 0);
+    assert!(!env.invoices().join("INV-2025-7.xml").exists());
+}
+
+#[test]
+fn build_e_invoice_lists_missing_fields_and_writes_nothing() {
+    let env = Env::with_config();
+    let md = env.invoice("INV-2025-7.md", INVOICE);
+    env.cmd()
+        .args(["build", md.to_str().unwrap(), "--ubl", "--facturx"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "cannot write a UBL (Peppol BIS 3.0) e-invoice",
+        ))
+        .stderr(predicate::str::contains("BT-10"))
+        .stderr(predicate::str::contains("BT-49"));
+    assert!(!env.invoices().join("INV-2025-7.pdf").exists());
+    assert!(!env.invoices().join("INV-2025-7.xml").exists());
+    // Factur-X alone has nothing missing here.
+    env.cmd()
+        .args(["build", md.to_str().unwrap(), "--facturx"])
+        .assert()
+        .success();
+}
+
 // ---------------------------------------------------------------- list
 
 #[test]

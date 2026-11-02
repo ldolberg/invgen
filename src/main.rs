@@ -5,6 +5,7 @@ use chrono::{Datelike, Local, NaiveDate};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand};
 use invgen::config::{Config, DEFAULT_CONFIG};
+use invgen::einvoice::{self, Format};
 use invgen::model::{Decimal, Invoice, Kind, Status, format_amount, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
@@ -50,6 +51,17 @@ enum Cmd {
         /// Also write PNG previews of every page into this directory.
         #[arg(long, value_name = "DIR")]
         png: Option<PathBuf>,
+        /// Write a Factur-X / ZUGFeRD PDF: PDF/A-3b with the EN 16931 XML
+        /// embedded (also config `e_invoice: facturx`).
+        #[arg(long)]
+        facturx: bool,
+        /// Also write <number>.xml next to the PDF: UBL, Peppol BIS Billing
+        /// 3.0 (also config `e_invoice: ubl`).
+        #[arg(long)]
+        ubl: bool,
+        /// Ignore `e_invoice` from the config: a plain PDF only.
+        #[arg(long, conflicts_with_all = ["facturx", "ubl"])]
+        no_e_invoice: bool,
         /// Fail instead of warning when an issued invoice changed since it
         /// was first exported (see `issued_hash` in docs/FORMAT.md).
         #[arg(long)]
@@ -189,9 +201,20 @@ fn run(cli: Cli) -> Result<ExitCode> {
             file,
             output,
             png,
+            facturx,
+            ubl,
+            no_e_invoice,
             strict,
         }) => {
-            let cfg = load_config(config_path.as_deref())?;
+            let mut cfg = load_config(config_path.as_deref())?;
+            if no_e_invoice {
+                cfg.e_invoice.clear();
+            }
+            for (on, f) in [(facturx, Format::FacturX), (ubl, Format::Ubl)] {
+                if on && !cfg.e_invoice.contains(&f) {
+                    cfg.e_invoice.push(f);
+                }
+            }
             let renderer = Renderer::new()?;
             let opts = BuildOpts { lock: true, strict };
             match build(
@@ -339,8 +362,32 @@ fn build(
             return Ok(None);
         }
     }
+    // Validate every requested e-invoice first, so nothing is written for an
+    // invoice that cannot be one, and all missing fields show up at once.
+    let mut invalid = false;
+    for &f in &cfg.e_invoice {
+        if let Err(e) = einvoice::document(&inv, f) {
+            let st = Style::stderr();
+            eprintln!(
+                "{} {} {}",
+                st.bold(&format!("{}:", file.display())),
+                st.red_bold("error:"),
+                e
+            );
+            invalid = true;
+        }
+    }
+    if invalid {
+        return Ok(None);
+    }
+    let facturx = cfg.e_invoice.contains(&Format::FacturX);
+    let attachment = if facturx {
+        Some(einvoice::facturx_attachment(&inv)?)
+    } else {
+        None
+    };
     let compiled = renderer
-        .compile(&inv)
+        .compile_with(&inv, attachment.as_ref())
         .with_context(|| format!("rendering {}", file.display()))?;
     if let Some(w) = invgen::render::epc::warning(&inv) {
         let st = Style::stderr();
@@ -364,8 +411,20 @@ fn build(
         std::fs::create_dir_all(parent)
             .with_context(|| format!("creating {}", parent.display()))?;
     }
-    let pdf = compiled.pdf()?;
+    let pdf = if facturx {
+        einvoice::facturx_export(&compiled, &inv)?
+    } else {
+        compiled.pdf()?
+    };
     std::fs::write(&out, pdf).with_context(|| format!("writing {}", out.display()))?;
+    let ubl_out = if cfg.e_invoice.contains(&Format::Ubl) {
+        let path = out.with_extension("xml");
+        std::fs::write(&path, einvoice::ubl_xml(&inv)?)
+            .with_context(|| format!("writing {}", path.display()))?;
+        Some(path)
+    } else {
+        None
+    };
 
     if let Some(dir) = png {
         std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
@@ -391,13 +450,22 @@ fn build(
 
     let st = Style::stdout();
     println!(
-        "{} {}  {}  {}  {}",
+        "{} {}  {}  {}  {}{}",
         st.green_bold("built"),
         st.bold(&inv.number),
         inv.to.name,
         st.bold(&format_money(&inv.currency, inv.signed_total())),
-        st.dim(&out.display().to_string())
+        st.dim(&out.display().to_string()),
+        if facturx { "  (Factur-X)" } else { "" }
     );
+    if let Some(path) = ubl_out {
+        println!(
+            "{} {}  {}",
+            st.green_bold("wrote"),
+            st.bold(&inv.number),
+            st.dim(&format!("{}  (UBL)", path.display()))
+        );
+    }
     if locked {
         println!(
             "{} {} as issued ({} recorded in {})",
