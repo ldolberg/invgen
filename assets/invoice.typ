@@ -200,6 +200,8 @@
 // ---------------------------------------------------------------- Items
 #let th(t, al: left) = align(al, label(t, fill: muted))
 #let num(t, fill: body, weight: "regular") = text(fill: fill, weight: weight, number-width: "tabular", t)
+// Several tax rates: show each line's rate and one totals row per rate.
+#let multi-rate = d.tax_breakdown.len() > 1
 
 #table(
   columns: (1fr, 26mm, 26mm, 32mm),
@@ -224,12 +226,29 @@
       num(it.qty, fill: ink)
       if it.unit != "" { text(fill: muted, " " + it.unit) }
     },
-    num(it.rate),
+    {
+      num(it.rate)
+      if multi-rate {
+        linebreak()
+        text(size: 7.75pt, fill: muted, d.tax_label + " " + it.tax_rate)
+      }
+    },
     num(it.total, fill: ink, weight: "medium"),
   )).flatten(),
 )
 
 // --------------------------------------------------------------- Totals
+#let tax-rows = if multi-rate {
+  // The taxable amount spans both columns so it does not wrap.
+  d.tax_breakdown.map(g => (
+    text(fill: muted, d.tax_label + " " + g.rate),
+    num(g.tax),
+    grid.cell(colspan: 2, inset: (x: 0pt, top: 0pt, bottom: 5pt),
+      text(size: 7pt, fill: faint, t.tax_base + " " + g.base)),
+  )).flatten()
+} else {
+  (text(fill: muted, d.tax_label + " (" + d.tax_rate + ")"), num(d.tax))
+}
 #v(4pt)
 #align(right, block(width: side, breakable: false, {
   set par(spacing: 0pt)
@@ -238,7 +257,7 @@
     inset: (x: 0pt, y: 5pt),
     align: (left, right),
     text(fill: muted, t.subtotal), num(d.subtotal),
-    text(fill: muted, d.tax_label + " (" + d.tax_rate + ")"), num(d.tax),
+    ..tax-rows,
   )
   v(4pt)
   block(
@@ -254,6 +273,12 @@
     ),
   )
 }))
+
+// ------------------------------------------------- Tax note (legal text)
+#if d.tax_note != none {
+  v(8pt)
+  align(right, block(width: side, align(left, text(size: 7.75pt, fill: muted, d.tax_note))))
+}
 
 // ---------------------------------------------------------------- Notes
 #if d.notes.len() > 0 {

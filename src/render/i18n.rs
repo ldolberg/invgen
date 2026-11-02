@@ -30,6 +30,7 @@ const EN: &[(&str, &str)] = &[
     ("total", "Total"),
     ("subtotal", "Subtotal"),
     ("tax", "VAT"),
+    ("tax_base", "Taxable amount"),
     ("total_due", "Total due"),
     ("notes", "Notes"),
     ("contact", "Contact"),
@@ -38,6 +39,12 @@ const EN: &[(&str, &str)] = &[
     ("status_paid", "Paid"),
     ("status_overdue", "Overdue"),
     ("status_draft", "Draft"),
+    (
+        "tax_note_reverse_charge",
+        "Reverse charge: VAT to be accounted for by the recipient (Article 196 of Council Directive 2006/112/EC).",
+    ),
+    ("tax_note_exempt", "Exempt from VAT."),
+    ("tax_note_outside_scope", "Outside the scope of VAT."),
 ];
 
 const ES: &[(&str, &str)] = &[
@@ -59,6 +66,7 @@ const ES: &[(&str, &str)] = &[
     ("total", "Total"),
     ("subtotal", "Subtotal"),
     ("tax", "IVA"),
+    ("tax_base", "Base imponible"),
     ("total_due", "Total a pagar"),
     ("notes", "Notas"),
     ("contact", "Contacto"),
@@ -67,6 +75,12 @@ const ES: &[(&str, &str)] = &[
     ("status_paid", "Pagada"),
     ("status_overdue", "Vencida"),
     ("status_draft", "Borrador"),
+    (
+        "tax_note_reverse_charge",
+        "Inversión del sujeto pasivo: IVA a cargo del destinatario (artículo 196 de la Directiva 2006/112/CE del Consejo).",
+    ),
+    ("tax_note_exempt", "Operación exenta de IVA."),
+    ("tax_note_outside_scope", "Operación no sujeta a IVA."),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -88,6 +102,7 @@ const DE: &[(&str, &str)] = &[
     ("total", "Betrag"),
     ("subtotal", "Zwischensumme"),
     ("tax", "USt."),
+    ("tax_base", "Bemessungsgrundlage"),
     ("total_due", "Zu zahlen"),
     ("notes", "Hinweise"),
     ("contact", "Kontakt"),
@@ -96,6 +111,12 @@ const DE: &[(&str, &str)] = &[
     ("status_paid", "Bezahlt"),
     ("status_overdue", "Überfällig"),
     ("status_draft", "Entwurf"),
+    (
+        "tax_note_reverse_charge",
+        "Steuerschuldnerschaft des Leistungsempfängers (Reverse Charge, Artikel 196 der Richtlinie 2006/112/EG des Rates).",
+    ),
+    ("tax_note_exempt", "Steuerfreie Leistung."),
+    ("tax_note_outside_scope", "Nicht steuerbare Leistung."),
 ];
 
 const FR: &[(&str, &str)] = &[
@@ -117,6 +138,7 @@ const FR: &[(&str, &str)] = &[
     ("total", "Total"),
     ("subtotal", "Sous-total"),
     ("tax", "TVA"),
+    ("tax_base", "Base d'imposition"),
     ("total_due", "Total à payer"),
     ("notes", "Notes"),
     ("contact", "Contact"),
@@ -125,6 +147,15 @@ const FR: &[(&str, &str)] = &[
     ("status_paid", "Payée"),
     ("status_overdue", "En retard"),
     ("status_draft", "Brouillon"),
+    (
+        "tax_note_reverse_charge",
+        "Autoliquidation : TVA due par le preneur (article 196 de la directive 2006/112/CE du Conseil).",
+    ),
+    ("tax_note_exempt", "Exonération de TVA."),
+    (
+        "tax_note_outside_scope",
+        "Opération hors du champ d'application de la TVA.",
+    ),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -146,6 +177,7 @@ const IT: &[(&str, &str)] = &[
     ("total", "Totale"),
     ("subtotal", "Imponibile"),
     ("tax", "IVA"),
+    ("tax_base", "Base imponibile"),
     ("total_due", "Totale da pagare"),
     ("notes", "Note"),
     ("contact", "Contatti"),
@@ -154,6 +186,12 @@ const IT: &[(&str, &str)] = &[
     ("status_paid", "Pagata"),
     ("status_overdue", "Scaduta"),
     ("status_draft", "Bozza"),
+    (
+        "tax_note_reverse_charge",
+        "Inversione contabile: IVA a carico del destinatario (articolo 196 della direttiva 2006/112/CE del Consiglio).",
+    ),
+    ("tax_note_exempt", "Operazione esente IVA."),
+    ("tax_note_outside_scope", "Operazione fuori campo IVA."),
 ];
 
 const PT: &[(&str, &str)] = &[
@@ -175,6 +213,7 @@ const PT: &[(&str, &str)] = &[
     ("total", "Total"),
     ("subtotal", "Subtotal"),
     ("tax", "IVA"),
+    ("tax_base", "Base tributável"),
     ("total_due", "Total a pagar"),
     ("notes", "Notas"),
     ("contact", "Contacto"),
@@ -183,6 +222,12 @@ const PT: &[(&str, &str)] = &[
     ("status_paid", "Paga"),
     ("status_overdue", "Vencida"),
     ("status_draft", "Rascunho"),
+    (
+        "tax_note_reverse_charge",
+        "Autoliquidação: IVA devido pelo adquirente (artigo 196.º da Diretiva 2006/112/CE do Conselho).",
+    ),
+    ("tax_note_exempt", "Isento de IVA."),
+    ("tax_note_outside_scope", "Operação não sujeita a IVA."),
 ];
 
 const NL: &[(&str, &str)] = &[
@@ -204,6 +249,7 @@ const NL: &[(&str, &str)] = &[
     ("total", "Totaal"),
     ("subtotal", "Subtotaal"),
     ("tax", "Btw"),
+    ("tax_base", "Grondslag"),
     ("total_due", "Te betalen"),
     ("notes", "Opmerkingen"),
     ("contact", "Contact"),
@@ -212,6 +258,12 @@ const NL: &[(&str, &str)] = &[
     ("status_paid", "Betaald"),
     ("status_overdue", "Vervallen"),
     ("status_draft", "Concept"),
+    (
+        "tax_note_reverse_charge",
+        "Btw verlegd: btw verschuldigd door de afnemer (artikel 196 van Richtlijn 2006/112/EG van de Raad).",
+    ),
+    ("tax_note_exempt", "Vrijgesteld van btw."),
+    ("tax_note_outside_scope", "Buiten de reikwijdte van de btw."),
 ];
 
 fn table(lang: &str) -> &'static [(&'static str, &'static str)] {

@@ -16,11 +16,22 @@ invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports
 number_prefix: INV                   # numbers look like INV-<year>-<seq>
 currency: EUR
 tax_rate: 0                          # percent
+# tax_note: reverse_charge           # legal mention under the totals: reverse_charge,
+#                                    # exempt, outside_scope or free text
 due_days: 14
 # language: en                       # labels: en, es, de, fr, it, pt, nl
 # labels:                            # override single labels
 #   bill_to: Customer
 # template: my-invoice.typ           # custom typst template (`invgen template --export`)
+# email:                             # `invgen send` message; placeholders:
+#   subject: "Invoice {number}"      # {number} {total} {due} {client} {from}
+#   body: |
+#     Hello,
+#
+#     please find attached invoice {number} for {total}, due {due}.
+#
+#     Best regards,
+#     {from}
 
 from:
   name: Your Name
@@ -43,6 +54,7 @@ clients:
     tax: ["Tax ID: X00000000"]
     # currency: EUR      # optional per-client defaults
     # tax_rate: 0
+    # tax_note: reverse_charge
     # language: es
     rate: 450            # default rate used by `invgen new`
     unit: days
@@ -63,6 +75,27 @@ pub struct ClientConfig {
     pub description: Option<String>,
     /// Label language for this client's invoices (overrides the config).
     pub language: Option<String>,
+    /// Tax mention for this client's invoices (overrides the config), e.g.
+    /// `reverse_charge`. See `Config::tax_note`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tax_note: Option<String>,
+}
+
+/// Message templates for `invgen send`. Placeholders: `{number}`,
+/// `{total}`, `{due}`, `{client}`, `{from}` (see `send::expand`).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct EmailConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub body: Option<String>,
+}
+
+impl EmailConfig {
+    pub fn is_empty(&self) -> bool {
+        self.subject.is_none() && self.body.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -85,6 +118,13 @@ pub struct Config {
     /// Custom typst template replacing the built-in one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template: Option<PathBuf>,
+    /// Subject and body for `invgen send` (defaults per invoice language).
+    #[serde(skip_serializing_if = "EmailConfig::is_empty")]
+    pub email: EmailConfig,
+    /// Default legal tax mention under the totals: a preset
+    /// (`reverse_charge`, `exempt`, `outside_scope`) or free text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tax_note: Option<String>,
     /// Directory of the loaded config file; relative `from.logo` and
     /// `template` paths resolve against it. Not part of the file.
     #[serde(skip)]
@@ -105,6 +145,8 @@ impl Default for Config {
             language: "en".into(),
             labels: BTreeMap::new(),
             template: None,
+            email: EmailConfig::default(),
+            tax_note: None,
             dir: None,
         }
     }

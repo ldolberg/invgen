@@ -56,6 +56,9 @@ pub struct LineItem {
     /// Price per unit, in `Invoice::currency`.
     #[serde(with = "num")]
     pub rate: Decimal,
+    /// Tax rate in percent for this line. `None` uses `Invoice::tax_rate`.
+    #[serde(default, with = "num::option", skip_serializing_if = "Option::is_none")]
+    pub tax_rate: Option<Decimal>,
 }
 
 impl LineItem {
@@ -130,6 +133,11 @@ pub struct Invoice {
     pub tax_rate: Decimal,
     /// Label for the tax row, default "VAT".
     pub tax_label: String,
+    /// Legal mention printed under the totals (`tax_note:`): a preset key
+    /// from [`TAX_NOTE_PRESETS`] (translated when rendering) or free text.
+    /// `None` prints nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tax_note: Option<String>,
     /// Free markdown-derived notes shown under the table (plain paragraphs).
     pub notes: Vec<String>,
     /// Text rendered as the signature (defaults to `from.name`). None hides it.
@@ -144,6 +152,28 @@ pub struct Invoice {
     pub template: Option<PathBuf>,
 }
 
+/// One row of the tax breakdown: every line taxed at `rate`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TaxGroup {
+    /// Tax rate in percent.
+    pub rate: Decimal,
+    /// Exact sum of the (already rounded) line totals at this rate.
+    pub base: Decimal,
+    /// `base * rate / 100`, rounded once to cents (see [`round_cents`]).
+    pub tax: Decimal,
+}
+
+/// The `tax_note:` presets. Each one renders as the translated label
+/// `tax_note_<preset>` (see `render::i18n`).
+pub const TAX_NOTE_PRESETS: &[&str] = &["reverse_charge", "exempt", "outside_scope"];
+
+/// The preset a `tax_note` names (`reverse_charge`, `Reverse-Charge`,
+/// `reverse charge`...), or `None` for free text.
+pub fn tax_note_preset(note: &str) -> Option<&'static str> {
+    let key = note.trim().to_ascii_lowercase().replace(['-', ' '], "_");
+    TAX_NOTE_PRESETS.iter().find(|&&p| p == key).copied()
+}
+
 impl Invoice {
     /// Exact sum of the (already rounded) line totals.
     pub fn subtotal(&self) -> Decimal {
@@ -152,9 +182,36 @@ impl Invoice {
             .fold(Decimal::ZERO, |acc, it| acc.saturating_add(it.total()))
     }
 
-    /// `subtotal * tax_rate / 100`, rounded to cents (see [`round_cents`]).
+    /// The tax rate that applies to `item`: its own, else the invoice's.
+    pub fn item_tax_rate(&self, item: &LineItem) -> Decimal {
+        item.tax_rate.unwrap_or(self.tax_rate)
+    }
+
+    /// One group per distinct tax rate, highest rate first. The bases add up
+    /// to `subtotal` and the taxes to `tax`. No items means no groups.
+    pub fn tax_breakdown(&self) -> Vec<TaxGroup> {
+        let mut bases: BTreeMap<Decimal, Decimal> = BTreeMap::new();
+        for it in &self.items {
+            let base = bases.entry(self.item_tax_rate(it)).or_default();
+            *base = base.saturating_add(it.total());
+        }
+        bases
+            .into_iter()
+            .rev()
+            .map(|(rate, base)| TaxGroup {
+                rate,
+                base,
+                tax: round_cents(base.saturating_mul(rate) / Decimal::ONE_HUNDRED),
+            })
+            .collect()
+    }
+
+    /// Sum of the per-rate taxes of [`Invoice::tax_breakdown`]. With a single
+    /// rate this is `subtotal * tax_rate / 100`, rounded to cents.
     pub fn tax(&self) -> Decimal {
-        round_cents(self.subtotal().saturating_mul(self.tax_rate) / Decimal::ONE_HUNDRED)
+        self.tax_breakdown()
+            .iter()
+            .fold(Decimal::ZERO, |acc, g| acc.saturating_add(g.tax))
     }
 
     /// `subtotal + tax`. Both are whole cents, so nothing is rounded here.
@@ -166,16 +223,36 @@ impl Invoice {
     /// The parser rejects such invoices, so for a parsed invoice `subtotal`,
     /// `tax` and `total` never saturate.
     pub fn checked_total(&self) -> Option<Decimal> {
+        let mut bases: BTreeMap<Decimal, Decimal> = BTreeMap::new();
         let mut subtotal = Decimal::ZERO;
         for it in &self.items {
-            subtotal = subtotal.checked_add(it.checked_total()?)?;
+            let line = it.checked_total()?;
+            subtotal = subtotal.checked_add(line)?;
+            let base = bases.entry(self.item_tax_rate(it)).or_default();
+            *base = base.checked_add(line)?;
         }
-        let tax = round_cents(
-            subtotal
-                .checked_mul(self.tax_rate)?
-                .checked_div(Decimal::ONE_HUNDRED)?,
-        );
-        subtotal.checked_add(tax)
+        let mut total = subtotal;
+        for (rate, base) in bases {
+            let tax = round_cents(base.checked_mul(rate)?.checked_div(Decimal::ONE_HUNDRED)?);
+            total = total.checked_add(tax)?;
+        }
+        Some(total)
+    }
+
+    /// A warning for an invoice that charges no tax, sets no `tax_note` and
+    /// goes to a client with tax lines (usually a VAT ID): EU B2B invoices
+    /// without VAT need a legal mention such as the reverse charge one.
+    pub fn tax_note_warning(&self) -> Option<String> {
+        let missing = !self.items.is_empty()
+            && self.tax().is_zero()
+            && self.tax_note.as_deref().is_none_or(|n| n.trim().is_empty())
+            && self.to.tax.iter().any(|t| !t.trim().is_empty());
+        missing.then(|| {
+            "no tax is charged and no `tax_note` is set; EU B2B invoices without VAT \
+             usually need a legal mention (e.g. `tax_note: reverse_charge`, `exempt` \
+             or `outside_scope`)"
+                .to_string()
+        })
     }
 }
 
@@ -384,6 +461,7 @@ mod tests {
             quantity,
             unit: String::new(),
             rate,
+            tax_rate: None,
         }
     }
 
@@ -401,6 +479,7 @@ mod tests {
             items,
             tax_rate,
             tax_label: "VAT".into(),
+            tax_note: None,
             notes: vec![],
             signature: None,
             accent: "#111827".into(),
@@ -460,6 +539,72 @@ mod tests {
             invoice(vec![item(d("7.5"), d("133.33"))], d("7.7")).tax(),
             d("77.00")
         );
+    }
+
+    #[test]
+    fn tax_breakdown_groups_lines_by_rate() {
+        let with_rate = |q: &str, r: &str, t: Option<&str>| LineItem {
+            tax_rate: t.map(d),
+            ..item(d(q), d(r))
+        };
+        // Single rate: one group, same numbers as subtotal * rate.
+        let single = invoice(vec![item(d("21"), d("450"))], d("21"));
+        assert_eq!(
+            single.tax_breakdown(),
+            vec![TaxGroup {
+                rate: d("21"),
+                base: d("9450"),
+                tax: d("1984.50"),
+            }]
+        );
+        assert_eq!(single.tax(), d("1984.50"));
+        // Lines without a rate use the invoice one; 21 and 21.00 are one rate.
+        let mixed = invoice(
+            vec![
+                with_rate("1", "100.05", None),
+                with_rate("1", "50.05", Some("10")),
+                with_rate("1", "0.05", Some("21.00")),
+                with_rate("2", "30", Some("0")),
+            ],
+            d("21"),
+        );
+        let groups = mixed.tax_breakdown();
+        assert_eq!(
+            groups.iter().map(|g| g.rate).collect::<Vec<_>>(),
+            vec![d("21"), d("10"), d("0")]
+        );
+        // 21% of 100.10 = 21.021 -> 21.02; 10% of 50.05 = 5.005 -> 5.01
+        assert_eq!((groups[0].base, groups[0].tax), (d("100.10"), d("21.02")));
+        assert_eq!((groups[1].base, groups[1].tax), (d("50.05"), d("5.01")));
+        assert_eq!((groups[2].base, groups[2].tax), (d("60"), d("0")));
+        assert_eq!(mixed.subtotal(), d("210.15"));
+        assert_eq!(mixed.tax(), d("26.03"));
+        assert_eq!(mixed.total(), d("236.18"));
+        assert_eq!(mixed.checked_total(), Some(d("236.18")));
+        assert!(invoice(vec![], d("21")).tax_breakdown().is_empty());
+    }
+
+    #[test]
+    fn tax_note_presets_and_warning() {
+        assert_eq!(tax_note_preset("reverse_charge"), Some("reverse_charge"));
+        assert_eq!(tax_note_preset(" Reverse-Charge "), Some("reverse_charge"));
+        assert_eq!(tax_note_preset("outside scope"), Some("outside_scope"));
+        assert_eq!(tax_note_preset("EXEMPT"), Some("exempt"));
+        assert_eq!(tax_note_preset("Exempt under section 4"), None);
+
+        let mut inv = invoice(vec![item(d("1"), d("100"))], Decimal::ZERO);
+        // No client tax lines: nothing to warn about.
+        assert_eq!(inv.tax_note_warning(), None);
+        inv.to.tax = vec!["VAT ID: ES B12345678".into()];
+        let w = inv.tax_note_warning().unwrap();
+        assert!(w.contains("tax_note"), "{w}");
+        inv.tax_note = Some("reverse_charge".into());
+        assert_eq!(inv.tax_note_warning(), None);
+        inv.tax_note = Some("  ".into());
+        assert!(inv.tax_note_warning().is_some());
+        inv.tax_note = None;
+        inv.tax_rate = d("21");
+        assert_eq!(inv.tax_note_warning(), None);
     }
 
     #[test]
@@ -552,6 +697,39 @@ mod tests {
         }
 
         #[test]
+        fn per_rate_taxes_plus_subtotal_equal_total(
+            lines in prop::collection::vec((amount(), amount(), prop::option::of(rate())), 0..20),
+            tax_rate in rate(),
+        ) {
+            let items: Vec<_> = lines
+                .into_iter()
+                .map(|(q, r, t)| LineItem { tax_rate: t, ..item(q, r) })
+                .collect();
+            let inv = invoice(items, tax_rate);
+            let groups = inv.tax_breakdown();
+            let bases: Decimal = groups.iter().map(|g| g.base).sum();
+            let taxes: Decimal = groups.iter().map(|g| g.tax).sum();
+            prop_assert_eq!(bases, inv.subtotal());
+            prop_assert_eq!(taxes, inv.tax());
+            prop_assert_eq!(inv.subtotal() + taxes, inv.total());
+            prop_assert_eq!(inv.checked_total(), Some(inv.total()));
+            // One group per distinct rate, highest first, each rounded once.
+            for w in groups.windows(2) {
+                prop_assert!(w[0].rate > w[1].rate);
+            }
+            for g in &groups {
+                prop_assert_eq!(g.tax, round_cents(g.base * g.rate / Decimal::ONE_HUNDRED));
+                let base: Decimal = inv
+                    .items
+                    .iter()
+                    .filter(|it| inv.item_tax_rate(it) == g.rate)
+                    .map(LineItem::total)
+                    .sum();
+                prop_assert_eq!(g.base, base);
+            }
+        }
+
+        #[test]
         fn format_amount_roundtrips(x in amount()) {
             let s = format_amount(x).replace(',', "");
             prop_assert_eq!(Decimal::from_str(&s).unwrap(), round_cents(x));
@@ -572,6 +750,7 @@ mod tests {
             items: Vec::new(),
             tax_rate: Decimal::ZERO,
             tax_label: "VAT".into(),
+            tax_note: None,
             notes: Vec::new(),
             signature: None,
             accent: "#111827".into(),

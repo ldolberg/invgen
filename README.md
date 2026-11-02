@@ -102,13 +102,14 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen` / `invgen edit [FILE]` | Open the editor |
 | `invgen new [--client KEY] [--open]` | Create the next numbered invoice |
 | `invgen new --from NUMBER\|last [--client KEY]` | Duplicate an invoice (items, notes, overrides) as the next one, with today's date and the period moved forward |
-| `invgen build FILE.md [-o OUT.pdf] [--png DIR]` | Render a PDF (and optional PNG previews) |
+| `invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]` | Render a PDF (and optional PNG previews). The first export of a non-draft invoice locks it (`issued_hash`); later builds warn when the issued content changed, `--strict` refuses |
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
 | `invgen list [--year YYYY] [--client KEY\|NAME] [--status S]... [--unpaid]` | Table of the invoices (including subfolders) with yearly totals and the outstanding balance by age (not due yet, 1-30, 31-60, 61+ days late); pending invoices past due show as `overdue Nd`. Filters combine and totals respect them |
 | `invgen list --format csv\|json` | Export the (filtered) invoices for accounting tools and scripts, see [docs/EXPORT.md](docs/EXPORT.md) |
-| `invgen check [--strict]` | Check the library: duplicate numbers, gaps, dates out of order, files that fail to parse, missing client or sender tax data. Exit 1 on errors (or warnings with `--strict`) |
+| `invgen check [--strict]` | Check the library: duplicate numbers, gaps, dates out of order, files that fail to parse, missing client or sender tax data, issued invoices that changed. Exit 1 on errors (or warnings with `--strict`) |
 | `invgen paid FILE\|NUMBER [--on DATE]` | Mark an invoice paid (`status: paid`, `paid_on`), editing only those lines |
 | `invgen status FILE\|NUMBER STATUS` | Set the status: `pending`, `paid`, `overdue` or `draft` |
+| `invgen send FILE\|NUMBER [--dry-run] [--mark-sent]` | Build the PDF if needed and open your mail client with the client's email, a subject and body from config templates, and the PDF attached (`xdg-email` on Linux; macOS Mail; Windows `mailto:` plus the PDF path). No SMTP, no stored credentials |
 | `invgen config [--edit]` | Show (or edit) the config file |
 | `invgen template --export [PATH] [--force]` | Write the built-in typst template (stdout without PATH) |
 
@@ -147,6 +148,12 @@ table holds the line items, and loose paragraphs become notes. List items
 (`- Consulting: 21 days @ 450`) work instead of a table. Full spec:
 [docs/FORMAT.md](docs/FORMAT.md). A `config:` block in the front matter overrides
 any config key for a single invoice.
+
+Lines can carry their own tax rate (a `Tax` column, or `- Training: 2 days @ 600, tax 10%`);
+the totals then show one row per rate. `tax_note: reverse_charge` (also `exempt`,
+`outside_scope` or free text; per invoice, per client or in the config) prints a
+translated legal mention under the totals, and `invgen build` warns when an invoice
+charges no tax to a client with a VAT ID and has no such note.
 
 ## Branding, languages and templates
 

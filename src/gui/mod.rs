@@ -181,6 +181,12 @@ pub struct App {
     dialog_rx: Receiver<Dialog>,
     dialog_open: bool,
     last_export: Option<PathBuf>,
+    /// Issued lock of the current document (see `crate::lock`).
+    pub lock: crate::lock::State,
+    /// Open the mail client once the running export finishes.
+    send_after_export: bool,
+    send_tx: Sender<Result<crate::send::Launch, String>>,
+    send_rx: Receiver<Result<crate::send::Launch, String>>,
     title: String,
     /// Scroll the editor to this 1-based line on the next frame.
     goto_line: Option<usize>,
@@ -221,6 +227,7 @@ impl App {
         let onboarding = (!config_path.exists()).then(onboarding::Form::default);
         let cfg = Arc::new(cfg);
         let (dialog_tx, dialog_rx) = channel();
+        let (send_tx, send_rx) = channel();
 
         let mut app = App {
             worker: Worker::spawn(cfg.clone(), ctx.clone()),
@@ -253,6 +260,10 @@ impl App {
             dialog_rx,
             dialog_open: false,
             last_export: None,
+            lock: crate::lock::State::Open,
+            send_after_export: false,
+            send_tx,
+            send_rx,
             title: String::new(),
             goto_line: None,
             zoom_anchor: None,
@@ -333,6 +344,7 @@ impl App {
         // The parsed invoice belongs to the previous document; keeping it would
         // name saves and exports after the wrong invoice number.
         self.invoice = None;
+        self.lock = crate::lock::State::Open;
         self.goto_line = None;
         self.text_changed(true);
         self.update_watches();
@@ -731,6 +743,79 @@ impl App {
         self.in_flight += 1;
     }
 
+    /// Export, then open the mail client with the PDF attached (like
+    /// `invgen send`).
+    pub fn send(&mut self) {
+        self.send_after_export = true;
+        self.export(None);
+    }
+
+    /// Remove `issued_hash` so the invoice can be edited without warnings.
+    pub fn unlock(&mut self) {
+        match crate::lock::unlock(&self.text) {
+            Ok(text) if text != self.text => {
+                self.text = text;
+                self.lock = crate::lock::State::Open;
+                self.text_changed(true);
+                self.toast(
+                    ToastKind::Info,
+                    "Unlocked. Save to keep it; the next export locks it again.",
+                );
+            }
+            Ok(_) => self.lock = crate::lock::State::Open,
+            Err(e) => self.toast(ToastKind::Error, format!("Cannot unlock: {e:#}")),
+        }
+    }
+
+    /// After exporting `inv`, record the issued lock in the editor text and
+    /// in the file on disk (keeping unsaved edits unsaved).
+    fn record_lock(&mut self, inv: &Invoice) {
+        let Ok(Some(text)) = crate::lock::record(&self.text, inv) else {
+            if let crate::lock::State::Changed { .. } = crate::lock::state(&self.text, inv) {
+                self.toast(
+                    ToastKind::Error,
+                    "This issued invoice changed since it was sent. Prefer a credit note.",
+                );
+            }
+            return;
+        };
+        let was_clean = !self.dirty();
+        self.text = text;
+        self.lock = crate::lock::State::Locked;
+        self.text_changed(true);
+        if was_clean {
+            self.saved_text = self.text.clone();
+        }
+        let Some(path) = self.path.clone() else {
+            return;
+        };
+        let written = std::fs::read_to_string(&path)
+            .map_err(anyhow::Error::from)
+            .and_then(|disk| {
+                let locked = crate::lock::record(&disk, inv)?.unwrap_or(disk);
+                std::fs::write(&path, &locked)?;
+                Ok(locked)
+            });
+        match written {
+            Ok(locked) => self.saved_text = locked,
+            Err(e) => self.toast(ToastKind::Error, format!("Cannot record the lock: {e:#}")),
+        }
+    }
+
+    fn send_mail(&mut self, path: &Path, inv: &Invoice) {
+        let msg = crate::send::compose(inv, &self.cfg.email, path);
+        if msg.to.is_none() {
+            self.toast(
+                ToastKind::Info,
+                "The client has no email in the config: the mail client will ask for one.",
+            );
+        }
+        let tx = self.send_tx.clone();
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::send::launch(&msg).map_err(|e| format!("{e:#}")));
+        });
+    }
+
     pub fn open_pdf(&mut self) {
         let target = self
             .last_export
@@ -785,6 +870,9 @@ impl App {
                     if generation == self.generation {
                         self.error = None;
                     }
+                    if generation == self.generation {
+                        self.lock = crate::lock::state(&self.text, &invoice);
+                    }
                     if generation >= self.pages_generation {
                         self.pages_generation = generation;
                         self.invoice = Some(*invoice);
@@ -828,19 +916,48 @@ impl App {
                 Outcome::Exported(res) => {
                     self.in_flight = self.in_flight.saturating_sub(1);
                     match res {
-                        Ok(p) => {
+                        Ok((p, inv)) => {
                             self.toasts.push(Toast {
                                 text: format!("Exported {}", file_name(&p)),
                                 kind: ToastKind::Success,
                                 born: Instant::now(),
                                 open: Some(p.clone()),
                             });
+                            self.record_lock(&inv);
+                            if std::mem::take(&mut self.send_after_export) {
+                                self.send_mail(&p, &inv);
+                            }
                             self.last_export = Some(p);
                             self.library_due = Some(Instant::now());
+                            // Non-blocking: the PDF is written either way.
+                            if let Some(w) =
+                                self.invoice.as_ref().and_then(Invoice::tax_note_warning)
+                            {
+                                self.toast(ToastKind::Info, format!("Note: {w}"));
+                            }
                         }
-                        Err(e) => self.toast(ToastKind::Error, format!("Export failed: {e}")),
+                        Err(e) => {
+                            self.send_after_export = false;
+                            self.toast(ToastKind::Error, format!("Export failed: {e}"));
+                        }
                     }
                 }
+            }
+        }
+
+        while let Ok(res) = self.send_rx.try_recv() {
+            match res {
+                Ok(l) if l.attaches => {
+                    self.toast(ToastKind::Success, "Opened the mail client with the PDF");
+                }
+                Ok(_) => {
+                    let pdf = self.last_export.as_deref().map(tilde).unwrap_or_default();
+                    self.toast(
+                        ToastKind::Info,
+                        format!("Opened the mail client. Attach the PDF by hand: {pdf}"),
+                    );
+                }
+                Err(e) => self.toast(ToastKind::Error, format!("Send failed: {e}")),
             }
         }
 

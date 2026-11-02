@@ -62,6 +62,17 @@ editor and preview to resize them; double click it to restore the default split.
   pick another location.
 - **Open PDF** opens the last export in your PDF viewer. The notification shown
   after an export has an **Open** button too.
+- **Send** exports the PDF, then opens your mail client with the client's email,
+  a subject, a body and the PDF attached, like
+  [`invgen send`](cli.md#invgen-send-filenumber---dry-run---mark-sent).
+
+Exporting a non-draft invoice for the first time locks it: an `issued_hash` line
+is added to its front matter (and to the file on disk). While an invoice is
+locked, a banner above the editor reads "Issued invoice, edits change a sent
+document"; it turns red when the invoice no longer matches what was exported,
+because of an edit or a config change. **Unlock** removes the `issued_hash` line
+(save to keep that); the next export locks the invoice again. Prefer a credit
+note over editing an invoice you already sent.
 
 Opening another file, starting a new one or closing the window with unsaved
 changes asks whether to **Save**, **Discard** or **Cancel**.

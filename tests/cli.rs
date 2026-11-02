@@ -278,6 +278,62 @@ fn build_writes_pdf_next_to_markdown() {
 }
 
 #[test]
+fn build_warns_about_zero_tax_without_tax_note() {
+    let env = Env::with_config();
+    let with_vat_id = |extra: &str| {
+        format!(
+            "---\nnumber: INV-2025-8\ndate: 2025-03-01\nclient: northwind\n{extra}to:\n  tax: [\"VAT ID: ESB12345678\"]\n---\n\n- Consulting: 2 days @ 450\n"
+        )
+    };
+
+    // 0% tax, client with a VAT ID, no tax_note: warning, but the build succeeds.
+    let md = env.invoice("a.md", &with_vat_id(""));
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("built"))
+        .stderr(predicate::str::contains("warning:"))
+        .stderr(predicate::str::contains("tax_note"))
+        .stderr(predicate::str::contains("a.md"));
+    assert!(is_pdf(&env.invoices().join("INV-2025-8.pdf")));
+
+    // A tax note, a non-zero rate, or a client without tax lines: no warning.
+    for (name, body) in [
+        ("b.md", with_vat_id("tax_note: reverse_charge\n")),
+        ("c.md", with_vat_id("tax_note: Not subject to VAT\n")),
+        ("d.md", with_vat_id("tax_rate: 21\n")),
+        ("e.md", INVOICE.to_string()),
+    ] {
+        let md = env.invoice(name, &body);
+        env.cmd()
+            .arg("build")
+            .arg(&md)
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("warning").not());
+    }
+}
+
+#[test]
+fn build_mixed_tax_rates_totals() {
+    let env = Env::with_config();
+    let md = env.invoice(
+        "mixed.md",
+        "---\nnumber: INV-2025-9\ndate: 2025-03-01\nclient: northwind\ntax_rate: 21\n---\n\n\
+         - Consulting: 2 days @ 450\n- Training: 1 days @ 600, tax 10%\n- Books: 2 @ 20, vat 0%\n",
+    );
+    // 900 + 600 + 40 = 1540; 21% of 900 = 189, 10% of 600 = 60 -> 1789.
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1,789.00"));
+}
+
+#[test]
 fn build_output_flag() {
     let env = Env::with_config();
     let md = env.invoice("march.md", INVOICE);
@@ -1082,4 +1138,178 @@ fn new_from_last_with_empty_library_fails() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("no invoices"));
+}
+
+// ---------------------------------------------------------------- issued lock
+
+#[test]
+fn build_locks_issued_invoice_and_warns_on_change() {
+    let env = Env::with_config();
+    let md = env.invoice("INV-2025-7.md", INVOICE);
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("locked INV-2025-7"));
+    let locked = fs::read_to_string(&md).unwrap();
+    assert!(locked.contains("\nissued_hash: \""), "{locked}");
+    // Everything else is kept byte for byte.
+    let without: String = locked
+        .lines()
+        .filter(|l| !l.starts_with("issued_hash:"))
+        .map(|l| format!("{l}\n"))
+        .collect();
+    assert_eq!(without, INVOICE);
+
+    // Rebuilding unchanged: no warning, the hash stays.
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+    assert_eq!(fs::read_to_string(&md).unwrap(), locked);
+
+    // Payment tracking does not break the lock.
+    fs::write(&md, locked.replace("status: paid", "status: pending")).unwrap();
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stderr(predicate::str::is_empty());
+    env.cmd().arg("check").assert().success();
+
+    // A config change (new sender address) alters the issued invoice.
+    let cfg = fs::read_to_string(env.config()).unwrap();
+    fs::write(
+        env.config(),
+        cfg.replace("Rue de la Gare", "Avenue de la Liberte"),
+    )
+    .unwrap();
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("built"))
+        .stderr(predicate::str::contains("INV-2025-7 was issued"))
+        .stderr(predicate::str::contains("credit note"));
+    env.cmd()
+        .args(["build", "--strict"])
+        .arg(&md)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("error:"));
+    env.cmd()
+        .arg("check")
+        .assert()
+        .failure()
+        .stdout(predicate::str::contains(
+            "issued invoice INV-2025-7 changed",
+        ));
+}
+
+#[test]
+fn build_never_locks_drafts() {
+    let env = Env::with_config();
+    let draft = INVOICE.replace("status: paid", "status: draft");
+    let md = env.invoice("INV-2025-7.md", &draft);
+    env.cmd().arg("build").arg(&md).assert().success();
+    assert_eq!(fs::read_to_string(&md).unwrap(), draft);
+}
+
+// ---------------------------------------------------------------- send
+
+/// The INVOICE for a client with an email address.
+fn mailable(env: &Env) -> PathBuf {
+    env.invoice(
+        "INV-2025-7.md",
+        &INVOICE.replace(
+            "client: northwind\n",
+            "client: northwind\nto:\n  email: billing@example.com\n",
+        ),
+    )
+}
+
+#[test]
+fn send_dry_run_prints_message_and_command() {
+    let env = Env::with_config();
+    let md = mailable(&env);
+    let before = fs::read_to_string(&md).unwrap();
+    let out = env
+        .cmd()
+        .args(["send", "INV-2025-7", "--dry-run"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    let stdout = stdout_of(&out);
+    let pdf = env.invoices().join("INV-2025-7.pdf");
+    assert!(
+        stdout.contains(&format!("would build {}", pdf.display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("To: billing@example.com"), "{stdout}");
+    assert!(stdout.contains("Subject: Invoice INV-2025-7"), "{stdout}");
+    assert!(
+        stdout.contains("invoice INV-2025-7 for EUR 9,000.00"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("Alex Morgan"), "{stdout}");
+    let launcher = if cfg!(target_os = "macos") {
+        "would run: osascript"
+    } else if cfg!(windows) {
+        "would run: explorer.exe 'mailto:billing@example.com?subject="
+    } else {
+        "would run: xdg-email --utf8 --subject 'Invoice INV-2025-7'"
+    };
+    assert!(stdout.contains(launcher), "{stdout}");
+    // A dry run builds and changes nothing.
+    assert!(!pdf.exists());
+    assert_eq!(fs::read_to_string(&md).unwrap(), before);
+
+    // By path too; once built, nothing needs building.
+    env.cmd().arg("build").arg(&md).assert().success();
+    env.cmd()
+        .arg("send")
+        .arg(&md)
+        .arg("--dry-run")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would build").not())
+        .stdout(predicate::str::contains("Subject: Invoice INV-2025-7"));
+}
+
+#[test]
+fn send_uses_config_templates_and_warns_without_recipient() {
+    let env = Env::with_config();
+    let mut cfg = fs::read_to_string(env.config()).unwrap();
+    cfg.push_str(
+        "email:\n  subject: \"{from} / {number}\"\n  body: \"Due {due}, total {total}, for {client}.\"\n",
+    );
+    fs::write(env.config(), cfg).unwrap();
+    env.invoice("INV-2025-7.md", INVOICE);
+    env.cmd()
+        .args(["send", "7", "--dry-run"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Subject: Alex Morgan / INV-2025-7",
+        ))
+        .stdout(predicate::str::contains(
+            "Due 2025-03-15, total EUR 9,000.00, for Northwind Labs SL.",
+        ))
+        .stderr(predicate::str::contains("has no `email`"));
+}
+
+#[test]
+fn send_unknown_invoice_fails() {
+    let env = Env::with_config();
+    env.invoice("INV-2025-7.md", INVOICE);
+    env.cmd()
+        .args(["send", "INV-2099-99", "--dry-run"])
+        .assert()
+        .failure();
 }

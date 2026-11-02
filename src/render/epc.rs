@@ -257,6 +257,7 @@ mod tests {
             due: None,
             status: Status::Pending,
             paid_on: None,
+            tax_note: None,
             currency: "EUR".into(),
             from: Party {
                 name: "Alex Morgan".into(),
@@ -278,6 +279,7 @@ mod tests {
                 detail: None,
                 quantity: dec("2"),
                 rate: dec("61.725"),
+                tax_rate: None,
                 unit: String::new(),
             }],
             tax_rate: Decimal::ZERO,

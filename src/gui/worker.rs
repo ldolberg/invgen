@@ -39,7 +39,8 @@ pub enum Outcome {
         pixels_per_pt: f32,
         pages: Vec<PageImage>,
     },
-    Exported(Result<PathBuf, String>),
+    /// The written PDF and the invoice it shows.
+    Exported(Result<(PathBuf, Box<Invoice>), String>),
     /// A preview job was dropped in favor of a newer one (no other outcome follows).
     Skipped,
 }
@@ -148,7 +149,7 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
                     continue;
                 }
                 Job::Export { text, path, dir } => {
-                    let res = (|| -> Result<PathBuf, String> {
+                    let res = (|| -> Result<(PathBuf, Box<Invoice>), String> {
                         let fresh;
                         let (invoice, compiled) = match &cache {
                             Some(c) if c.text == text => (&c.invoice, &c.compiled),
@@ -166,7 +167,7 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
                             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                         }
                         std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-                        Ok(path)
+                        Ok((path, Box::new(invoice.clone())))
                     })();
                     let _ = tx.send(Outcome::Exported(res));
                 }

@@ -15,6 +15,7 @@ client: northwind       # key into config `clients:`  ...or an inline `to:` bloc
 currency: EUR                 # optional: falls back to client currency, then config default
 tax_rate: 0                   # percent; optional, falls back to client, then config
 tax_label: VAT                # optional: defaults to the translated "VAT" label
+tax_note: reverse_charge      # optional: legal mention under the totals (presets or free text)
 accent: "#111827"             # optional
 language: en                  # optional: en, es, de, fr, it, pt, nl
 template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
@@ -35,11 +36,23 @@ Any other paragraph becomes a note under the table.
 * **Items table**: the first markdown table. Columns are matched by header name
   (case-insensitive, anything after `(` ignored, so `Rate (EUR)` works):
   `description`/`item`/`service`, `qty`/`quantity`, `unit`, `rate`/`price`/`unit price`,
-  optional `detail`. A `Days` or `Hours` header is a quantity column that also sets
+  optional `detail`, optional `tax`/`vat` (also `tax rate`, `vat %`...). A `Days` or `Hours` header is a quantity column that also sets
   the unit. Other columns (e.g. `Total`) are ignored; totals are always computed.
   Description, quantity and rate columns are required. Fully empty rows are skipped.
   `Qty` may be written `21 days` (the unit is taken from it if there is no unit column
   or the unit cell is empty). Later tables are ignored.
+* **Per-line tax rate**: a `Tax` (or `VAT`) column gives each row its own rate in
+  percent (`21`, `21%`, `10 %`, `0%`); an empty cell uses the invoice `tax_rate`.
+  In a list item, add `, tax 10%` (or `, vat 10%`, `; tax: 10%`) at the end of the
+  first line: `- Training: 2 days @ 600, tax 10%`. Rates must not be negative.
+
+  ```markdown
+  | Description | Qty | Rate | Tax |
+  |-------------|-----|------|-----|
+  | Consulting  | 21  | 450  |     |
+  | Training    | 2   | 600  | 10% |
+  | Books       | 3   | 40   | 0%  |
+  ```
 * **Numbers** accept `1,234.50` (`,` is only a thousands separator in groups of three,
   `.` is the decimal point; `1.234,50` is an error). A leading or trailing currency
   symbol/code is ignored: `EUR 450`, `€450`, `450 EUR`. Negative rates are allowed (discounts).
@@ -75,10 +88,17 @@ rule: **round to cents, half away from zero** (`1.005 -> 1.01`, `-1.005 -> -1.01
 2. **Subtotal** = the exact sum of the rounded line totals (no further rounding).
 3. **Tax** = `subtotal x tax_rate / 100`, rounded to cents.
    `1,000.99` at `7.7%` is `77.07623`, shown as `77.08`.
+   With per-line rates, the lines are grouped by rate: each rate's **base** is the
+   exact sum of its rounded line totals, its tax is `base x rate / 100` rounded once
+   to cents, and the invoice **tax** is the sum of the per-rate taxes. With a single
+   rate this is exactly the rule above.
 4. **Total** = `subtotal + tax`.
 
-So the line totals shown on the invoice always add up to the subtotal, and subtotal
-plus tax always equals the total, to the cent. Rates and quantities with more than two
+So the line totals shown on the invoice always add up to the subtotal, the per-rate
+bases add up to the subtotal, and subtotal plus tax always equals the total, to the
+cent. When an invoice uses more than one rate, the PDF shows the rate under each
+line's price and one totals row per rate (`VAT 21%`, with its taxable amount) instead
+of the single `VAT (21%)` row. Rates and quantities with more than two
 decimals are used at full precision in step 1 and only displayed rounded (quantities
 show at most two decimals, trailing zeros dropped). An invoice whose amounts exceed
 about 7.9e28 is an error.
@@ -115,6 +135,100 @@ about 7.9e28 is an error.
   language changes every label on the invoice (headings, column names, status);
   dates and amounts keep their format.
 * `template`: front matter, then the config; none means the built-in template.
+* `tax_note`: front matter, then the client, then the config. A legal mention printed
+  under the totals. Presets are translated into the invoice language:
+  `reverse_charge` (reverse charge, Article 196 of Council Directive 2006/112/EC),
+  `exempt` (exempt from VAT) and `outside_scope` (outside the scope of VAT); any other
+  text is printed as written. `tax_note: false` on an invoice drops a client or config
+  note. The preset texts are labels (`tax_note_reverse_charge`, `tax_note_exempt`,
+  `tax_note_outside_scope`), so `labels:` in the config can reword them. They are
+  standard mentions, not legal advice: check what your jurisdiction requires.
+  `invgen build` (and the editor, on export) warns when an invoice charges no tax,
+  sets no `tax_note` and the client has `tax` lines (such as a VAT ID).
+* `issued_hash`: written by invgen when the invoice is first exported; see
+  [Issued invoices](#issued-invoices-issued_hash). Do not write it by hand.
+* `sent_on`: `YYYY-MM-DD`, written by `invgen send --mark-sent`. Informational only.
+
+## Issued invoices (`issued_hash`)
+
+Once an invoice is sent it should not change. When a non-draft invoice is exported
+to PDF for the first time (`invgen build`, `invgen send`, or Export PDF / Send in the
+editor), invgen adds one line to its front matter:
+
+```yaml
+issued_hash: "3f2a9c4e1b7d6a05"
+```
+
+It is the first 16 hex digits of a SHA-256 over the fully resolved invoice: the JSON
+of the invoice model after config defaults, the client entry and every override are
+applied (sender, client, payment details, items, tax, dates, language, labels,
+template path...). The written `status`, `paid_on` and `sent_on` are left out, so
+marking an invoice as paid does not break the lock. If `number:` or `date:` is
+missing it is written too, since both would otherwise be resolved again on every
+build. Only that line (and those keys) is added; the rest of the file stays byte for
+byte. Drafts (`status: draft`) are never locked.
+
+On every later build the hash is computed again. When it differs, the invoice was
+issued and what a rebuild produces is no longer what was sent, whether the change
+came from the file or from the config (a new address, a new bank account):
+
+* `invgen build` prints a warning naming the invoice and suggesting a credit note,
+  and still builds. `invgen build --strict` refuses instead (exit status 1).
+* `invgen check` reports it as an error.
+* The editor shows a banner on locked invoices ("Issued invoice, edits change a
+  sent document"), in red when the content changed. Its **Unlock** button removes
+  `issued_hash` (save to keep that); the next export locks the invoice again.
+
+The first export is the one that counts: building a locked invoice again never
+updates the hash. `invgen watch` warns like `build` but never adds a lock, since it
+rebuilds while the invoice is still being written. To accept a change on purpose,
+delete the `issued_hash` line (or use Unlock) and export again.
+
+## Sending (`invgen send`)
+
+`invgen send FILE|NUMBER` builds the PDF when it is missing or older than the invoice
+file or the config (which also locks the invoice, see above), then opens the desktop
+mail client with:
+
+* **To**: the client's `email` (`clients.<key>.email`, or `to: email:` inline).
+  Without one, the mail client asks for the recipient.
+* **Subject** and **body** from the config's `email:` block, else built-in defaults in
+  the invoice language (`en`, `es`, `de`, `fr`, `it`, `pt`, `nl`).
+* **Attachment**: the PDF (`<number>.pdf` next to the invoice file).
+
+Placeholders in `email.subject` and `email.body`: `{number}`, `{total}` (e.g.
+`EUR 9,450.00`), `{due}` (`YYYY-MM-DD`, empty without a due date), `{client}` (client
+name) and `{from}` (your name). Unknown `{...}` text is kept as written. The subject
+is one line; line breaks in it become spaces.
+
+```yaml
+email:
+  subject: "Invoice {number} from {from}"
+  body: |
+    Hello,
+
+    please find attached invoice {number} for {total}, due {due}.
+
+    Best regards,
+    {from}
+```
+
+How the mail client is opened:
+
+* **Linux** (and other freedesktop systems): `xdg-email --subject ... --body ...
+  --attach <pdf> <to>`, which opens the default mail client with everything filled in.
+  If `xdg-email` is missing, a `mailto:` link is opened with `xdg-open` and the PDF
+  path is printed to attach by hand.
+* **macOS**: Mail, through `osascript`, with every field and the attachment. If that
+  fails, a `mailto:` link is opened with `open` and the PDF path is printed.
+* **Windows**: a `mailto:` link (opened through `explorer.exe`); mailto cannot carry
+  attachments, so the PDF path is printed.
+
+invgen never sends mail itself and never asks for or stores SMTP credentials: the
+message is only handed to your mail client, and you press Send there.
+`--dry-run` prints the message and the command instead of running anything;
+`--mark-sent` records `sent_on: <today>` in the front matter after the mail client
+opened. The editor's **Send** button exports the PDF and then does the same.
 
 ## Branding and languages
 
@@ -197,10 +311,14 @@ number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
 currency: EUR
 tax_rate: 0
 due_days: 14
+tax_note: exempt                     # optional: default legal tax mention
 language: en                         # optional: en, es, de, fr, it, pt, nl
 labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
+email:                               # optional: `invgen send` message (see Sending)
+  subject: "Invoice {number}"
+  body: "Hello,\n\nplease find attached invoice {number} for {total}.\n\n{from}"
 from:
   name: Alex Morgan
   address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
@@ -218,8 +336,10 @@ clients:
     name: Northwind Labs SL
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
+    email: billing@example.com   # optional: recipient for `invgen send`
     currency: EUR      # optional per-client defaults
     tax_rate: 0
+    tax_note: reverse_charge   # optional: EU B2B services without VAT
     language: es       # optional: invoices for this client in Spanish
     rate: 450          # default rate used by templates
     unit: days

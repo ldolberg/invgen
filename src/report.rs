@@ -31,6 +31,8 @@ pub struct Entry {
     pub client_line: Option<usize>,
     /// 1-based line of the `from:` key, else of `config:` (which may override it).
     pub from_line: Option<usize>,
+    /// The recorded `issued_hash` (see [`crate::lock`]) and its 1-based line.
+    pub issued_hash: Option<(String, usize)>,
     pub invoice: Invoice,
 }
 
@@ -96,6 +98,9 @@ pub fn entry_from_source(
         date_line: fm.line_of("date"),
         client_line: fm.line_of("client").or_else(|| fm.line_of("to")),
         from_line: fm.line_of("from").or_else(|| fm.line_of("config")),
+        issued_hash: fm
+            .scalar(crate::lock::KEY)
+            .zip(fm.line_of(crate::lock::KEY)),
         invoice,
     })
 }
@@ -538,6 +543,26 @@ pub fn check(lib: &Library, pdf_stems: &[String]) -> Vec<Diagnostic> {
         out.push(Diagnostic::new(&err.path, line, Error, err.message.clone()));
     }
 
+    // Issued invoices whose resolved content changed since export.
+    for e in &lib.entries {
+        let Some((hash, line)) = &e.issued_hash else {
+            continue;
+        };
+        if let crate::lock::State::Changed { .. } = crate::lock::compare(Some(hash), &e.invoice) {
+            out.push(Diagnostic::new(
+                &e.path,
+                Some(*line),
+                Error,
+                format!(
+                    "issued invoice {} changed since it was exported (file or config); \
+                     issue a credit note, or remove `{}` to accept the change",
+                    e.invoice.number,
+                    crate::lock::KEY
+                ),
+            ));
+        }
+    }
+
     // Numbered entries grouped by prefix.
     let mut by_prefix: BTreeMap<String, Vec<(&Entry, SeqNumber)>> = BTreeMap::new();
     let mut by_number: BTreeMap<String, Vec<&Entry>> = BTreeMap::new();
@@ -749,6 +774,7 @@ mod tests {
             date_line: Some(3),
             client_line: Some(5),
             from_line: None,
+            issued_hash: None,
             invoice: Invoice {
                 number: number.into(),
                 date: d(date),
@@ -771,6 +797,7 @@ mod tests {
                     quantity: Decimal::ONE,
                     unit: String::new(),
                     rate: dec(total),
+                    tax_rate: None,
                 }],
                 tax_rate: Decimal::ZERO,
                 tax_label: "VAT".into(),
@@ -778,6 +805,7 @@ mod tests {
                 signature: None,
                 accent: "#111827".into(),
                 paid_on: None,
+                tax_note: None,
                 language: "en".into(),
                 labels: Default::default(),
                 template: None,
