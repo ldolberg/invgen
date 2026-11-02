@@ -96,6 +96,21 @@ any config key for a single invoice.
 | Ctrl+= / Ctrl+- | Zoom preview in / out |
 | Ctrl+0 | Reset zoom |
 
+## Fuzzing
+
+The parser runs on every keystroke in the editor, so it must return an error, never
+panic, on any input. `cargo test` includes a property test for that
+(`tests/parse_never_panics.rs`); for deeper runs there is a libFuzzer target
+(needs nightly and `cargo install cargo-fuzz`):
+
+```sh
+cargo +nightly fuzz run parse -- -max_total_time=1800
+```
+
+It starts from the seeds in `fuzz/corpus/parse/` (the example invoices plus a few more)
+and uses the fictional `examples/config.yaml`. Crashing inputs land in
+`fuzz/artifacts/parse/`; add each one as a regression test in `src/parse.rs`.
+
 ## Releasing
 
 Bump `version` in `Cargo.toml`, add a `<release>` entry to

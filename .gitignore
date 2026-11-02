@@ -6,3 +6,13 @@
 /build-flatpak-repo
 /.flatpak-builder
 /build-pages
+
+# cargo-fuzz: only the seed corpus is committed
+/fuzz/target
+/fuzz/artifacts
+/fuzz/coverage
+/fuzz/Cargo.lock
+/fuzz/corpus/*
+!/fuzz/corpus/parse
+/fuzz/corpus/parse/*
+!/fuzz/corpus/parse/seed-*
