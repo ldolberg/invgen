@@ -141,6 +141,42 @@ impl Invoice {
     }
 }
 
+/// Display status, derived from the written status and the due date.
+/// The PDF always shows the written `status`; `invgen list` and the GUI
+/// sidebar show this one, so unpaid invoices past due stand out.
+impl Invoice {
+    /// `pending` with a due date before `today` counts as `overdue`. Any other
+    /// written status wins, and an invoice without a due date is never
+    /// overdue automatically.
+    pub fn effective_status(&self, today: NaiveDate) -> Status {
+        match (self.status, self.due) {
+            (Status::Pending, Some(due)) if due < today => Status::Overdue,
+            (s, _) => s,
+        }
+    }
+
+    /// Whole days past the due date when the effective status is `overdue`
+    /// and there is a due date before `today`, else `None`.
+    pub fn days_overdue(&self, today: NaiveDate) -> Option<i64> {
+        let due = self.due?;
+        (self.effective_status(today) == Status::Overdue && due < today)
+            .then(|| (today - due).num_days())
+    }
+
+    /// Effective status label with days late, e.g. `pending` or `overdue 12d`.
+    pub fn status_display(&self, today: NaiveDate) -> String {
+        status_display(self.effective_status(today), self.days_overdue(today))
+    }
+}
+
+/// `status_display` from already computed parts: `overdue 12d`, `paid`.
+pub fn status_display(status: Status, days_overdue: Option<i64>) -> String {
+    match days_overdue {
+        Some(n) => format!("{} {n}d", status.label()),
+        None => status.label().to_string(),
+    }
+}
+
 /// Round to cents, half away from zero, as a person would on paper:
 /// `1.005 -> 1.01`, `-1.005 -> -1.01`, `1.004 -> 1.00`.
 ///
@@ -469,5 +505,58 @@ mod tests {
             let s = format_amount(x).replace(',', "");
             prop_assert_eq!(Decimal::from_str(&s).unwrap(), round_cents(x));
         }
+    }
+
+    fn dated_invoice(status: Status, due: Option<NaiveDate>) -> Invoice {
+        Invoice {
+            number: "EINV-2026-01".into(),
+            date: NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
+            due,
+            status,
+            currency: "EUR".into(),
+            from: Party::default(),
+            to: Party::default(),
+            payment: Payment::default(),
+            items: Vec::new(),
+            tax_rate: Decimal::ZERO,
+            tax_label: "VAT".into(),
+            notes: Vec::new(),
+            signature: None,
+            accent: "#111827".into(),
+        }
+    }
+
+    #[test]
+    fn effective_status_derives_overdue_from_due_date() {
+        let d = |m, day| NaiveDate::from_ymd_opt(2026, m, day).unwrap();
+        let today = d(11, 2);
+        // Pending and past due: overdue, with days late.
+        let late = dated_invoice(Status::Pending, Some(d(10, 21)));
+        assert_eq!(late.effective_status(today), Status::Overdue);
+        assert_eq!(late.days_overdue(today), Some(12));
+        // Due today is not late yet.
+        let due_today = dated_invoice(Status::Pending, Some(today));
+        assert_eq!(due_today.effective_status(today), Status::Pending);
+        assert_eq!(due_today.days_overdue(today), None);
+        // Not due yet.
+        let future = dated_invoice(Status::Pending, Some(d(11, 30)));
+        assert_eq!(future.effective_status(today), Status::Pending);
+        // No due date: never overdue automatically.
+        let no_due = dated_invoice(Status::Pending, None);
+        assert_eq!(no_due.effective_status(today), Status::Pending);
+        assert_eq!(no_due.days_overdue(today), None);
+        // An explicit non-pending status wins.
+        for s in [Status::Paid, Status::Draft] {
+            let inv = dated_invoice(s, Some(d(1, 1)));
+            assert_eq!(inv.effective_status(today), s);
+            assert_eq!(inv.days_overdue(today), None);
+        }
+        // Written overdue stays overdue and still reports days late.
+        let written = dated_invoice(Status::Overdue, Some(d(10, 31)));
+        assert_eq!(written.effective_status(today), Status::Overdue);
+        assert_eq!(written.days_overdue(today), Some(2));
+        assert_eq!(dated_invoice(Status::Overdue, None).days_overdue(today), None);
+        assert_eq!(late.status_display(today), "overdue 12d");
+        assert_eq!(future.status_display(today), "pending");
     }
 }
