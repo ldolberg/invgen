@@ -6,5 +6,6 @@ pub mod library;
 pub mod model;
 pub mod parse;
 pub mod render;
+pub mod report;
 
 pub use model::Invoice;
