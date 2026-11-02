@@ -30,6 +30,12 @@ if [ ! -d "$PAGES" ]; then
     fi
 fi
 git -C "$PAGES" pull -q --ff-only origin gh-pages 2>/dev/null || true
+# Git drops empty directories, so a fresh checkout lacks parts of the OSTree layout.
+if [ -f "$PAGES/repo/config" ]; then
+    for d in objects refs/heads refs/mirrors refs/remotes state tmp/cache extensions; do
+        mkdir -p "$PAGES/repo/$d"
+    done
+fi
 
 $BUILDER --force-clean --default-branch=stable \
     --repo="$PAGES/repo" --gpg-sign="$GPG_KEY" --gpg-homedir="$GPG_HOME" \
