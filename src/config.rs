@@ -108,7 +108,12 @@ impl Config {
     pub fn next_number(&self, year: i32) -> String {
         let mut max = 0u64;
         scan_sequences(&self.invoices_dir, &self.number_prefix, 2, &mut max);
-        format!("{}-{}-{:02}", self.number_prefix, year, max + 1)
+        format!(
+            "{}-{}-{:02}",
+            self.number_prefix,
+            year,
+            max.saturating_add(1)
+        )
     }
 
     /// Markdown skeleton for a new invoice for `client` (or the first client), dated today,
@@ -285,6 +290,16 @@ mod tests {
         assert!(c.invoices_dir.ends_with("Documents/Invoices"));
         assert!(!c.invoices_dir.starts_with("~"));
         assert!(c.clients.is_empty());
+    }
+
+    /// A `config: invoices_dir:` override can point the parser at any folder,
+    /// so a file named with the largest sequence must not overflow.
+    #[test]
+    fn next_number_does_not_overflow() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(format!("EINV-2026-{}.md", u64::MAX)), "").unwrap();
+        let next = cfg_in(dir.path()).next_number(2026);
+        assert_eq!(next, format!("EINV-2026-{}", u64::MAX));
     }
 
     #[test]
