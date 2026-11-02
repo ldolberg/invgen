@@ -30,6 +30,7 @@ fn sample() -> Invoice {
             iban: Some("DE89 3704 0044 0532 0130 00".into()),
             bic: Some("COBADEFFXXX".into()),
             notes: vec![],
+            qr: false,
         },
         items: vec![LineItem {
             description: "Senior Software Engineer #[panic()] $x$ *bold*".into(),
@@ -234,7 +235,7 @@ fn view_carries_contract_version_language_and_labels() {
     let mut inv = sample();
     inv.language = "fr".into();
     inv.tax_label = String::new();
-    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    let v = serde_json::to_value(data::View::new(&inv, None, None)).unwrap();
     assert_eq!(v["contract_version"], CONTRACT_VERSION);
     assert_eq!(v["language"], "fr");
     assert_eq!(v["labels"]["bill_to"], "Facturé à");
@@ -411,6 +412,80 @@ fn example_invoices_render_with_example_config() {
     assert!(seen >= 3);
 }
 
+/// Decode every QR code found on the rendered first page.
+fn decode_qr_codes(c: &Compiled) -> Vec<String> {
+    let page = &c.render_pages(3.0)[0];
+    let (w, h) = (page.width as usize, page.height as usize);
+    let mut img = rqrr::PreparedImage::prepare_from_greyscale(w, h, |x, y| {
+        let i = (y * w + x) * 4;
+        let px = &page.rgba[i..i + 4];
+        // Transparent background counts as white paper.
+        let a = u32::from(px[3]);
+        let grey = (u32::from(px[0]) + u32::from(px[1]) + u32::from(px[2])) / 3;
+        (grey * a / 255 + (255 - a)) as u8
+    });
+    img.detect_grids()
+        .iter()
+        .filter_map(|g| g.decode().ok().map(|(_, text)| text))
+        .collect()
+}
+
+#[test]
+fn epc_qr_code_renders_and_scans_back_to_the_payload() {
+    let r = Renderer::new().unwrap();
+    let mut inv = sample();
+    inv.payment.qr = true;
+    let payload = epc::check(&inv).unwrap().unwrap();
+    assert!(
+        payload.ends_with("\nEUR9450\n\n\nEINV-2026-23"),
+        "{payload}"
+    );
+
+    let c = r.compile(&inv).unwrap();
+    assert_eq!(c.page_count(), 1);
+    assert!(c.pdf().unwrap().starts_with(b"%PDF"));
+    assert_eq!(image_count(&c), 1);
+    assert!(doc_text(&c).contains("Scan to pay"));
+    assert_eq!(decode_qr_codes(&c), vec![payload]);
+
+    let v = serde_json::to_value(data::View::new(&inv, None, Some(QR_PATH.into()))).unwrap();
+    assert_eq!(v["payment"]["qr"], QR_PATH);
+    assert_eq!(v["labels"]["scan_to_pay"], "Scan to pay");
+
+    // Translated caption.
+    inv.language = "de".into();
+    let c = r.compile(&inv).unwrap();
+    assert!(doc_text(&c).contains("Zum Bezahlen scannen"));
+}
+
+#[test]
+fn epc_qr_code_is_skipped_silently_when_not_applicable() {
+    let r = Renderer::new().unwrap();
+    let mut inv = sample();
+    // Off by default.
+    let c = r.compile(&inv).unwrap();
+    assert_eq!(image_count(&c), 0);
+    assert!(!doc_text(&c).contains("Scan to pay"));
+    let v = serde_json::to_value(data::View::new(&inv, None, None)).unwrap();
+    assert!(v["payment"]["qr"].is_null());
+
+    inv.payment.qr = true;
+    let breakers: [fn(&mut Invoice); 4] = [
+        |i| i.currency = "USD".into(),
+        |i| i.payment.iban = None,
+        |i| i.payment.iban = Some("DE00 0000 0000 0000 0000 00".into()),
+        |i| i.items[0].rate = Decimal::ZERO,
+    ];
+    for broken in breakers {
+        let mut inv = inv.clone();
+        broken(&mut inv);
+        let c = r.compile(&inv).unwrap();
+        assert_eq!(image_count(&c), 0);
+        assert!(!doc_text(&c).contains("Scan to pay"));
+        assert!(decode_qr_codes(&c).is_empty());
+    }
+}
+
 fn multi_rate(lang: &str) -> Invoice {
     let mut inv = sample();
     inv.language = lang.into();
@@ -429,7 +504,7 @@ fn multi_rate(lang: &str) -> Invoice {
 fn single_rate_view_is_unchanged() {
     let mut inv = sample();
     inv.tax_rate = Decimal::from(21);
-    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    let v = serde_json::to_value(data::View::new(&inv, None, None)).unwrap();
     assert_eq!(v["tax_rate"], "21%");
     assert_eq!(v["tax"], "EUR 1,984.50");
     assert_eq!(v["total"], "EUR 11,434.50");
@@ -445,7 +520,7 @@ fn single_rate_view_is_unchanged() {
 fn multi_rate_breakdown_renders_in_two_languages() {
     let r = Renderer::new().unwrap();
     let inv = multi_rate("en");
-    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    let v = serde_json::to_value(data::View::new(&inv, None, None)).unwrap();
     // 9,450 at 21% = 1,984.50; 1,200 at 10% = 120.00.
     let groups = v["tax_breakdown"].as_array().unwrap();
     assert_eq!(groups.len(), 2);
@@ -489,7 +564,7 @@ fn tax_note_presets_render_translated() {
             let key = format!("tax_note_{preset}");
             let expected = i18n::label(lang, &key, &Default::default());
             assert_ne!(expected, key, "{lang}: {key} has no text");
-            let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+            let v = serde_json::to_value(data::View::new(&inv, None, None)).unwrap();
             assert_eq!(v["tax_note"], expected.as_str(), "{lang} {preset}");
             if *preset == "reverse_charge" {
                 assert!(
@@ -515,6 +590,6 @@ fn tax_note_presets_render_translated() {
     inv.tax_note = Some("exempt".into());
     inv.labels
         .insert("tax_note_exempt".into(), "Custom exemption text".into());
-    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    let v = serde_json::to_value(data::View::new(&inv, None, None)).unwrap();
     assert_eq!(v["tax_note"], "Custom exemption text");
 }

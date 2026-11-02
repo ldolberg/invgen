@@ -351,6 +351,50 @@ fn build_output_flag() {
 }
 
 #[test]
+fn build_payment_qr_code_and_skip_warning() {
+    let env = Env::with_config();
+    let with_qr = INVOICE.replace(
+        "client: northwind\n",
+        "client: northwind\npayment:\n  qr: true\n",
+    );
+    let md = env.invoice("qr.md", &with_qr);
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("QR").not());
+    assert!(is_pdf(&env.invoices().join("INV-2025-7.pdf")));
+
+    // Not EUR: still builds, with a warning naming the file and the reason.
+    let usd = with_qr.replace("client: northwind\n", "client: northwind\ncurrency: USD\n");
+    let md = env.invoice("usd.md", &usd.replace("INV-2025-7", "INV-2025-8"));
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("usd.md"))
+        .stderr(predicate::str::contains(
+            "warning: payment QR code skipped: currency is USD",
+        ));
+    assert!(is_pdf(&env.invoices().join("INV-2025-8.pdf")));
+
+    // `config: payment:` turns it on too; a bad IBAN is reported.
+    let bad = INVOICE.replace(
+        "client: northwind\n",
+        "client: northwind\nconfig:\n  payment:\n    qr: true\n    iban: DE00 1234\n",
+    );
+    let md = env.invoice("bad.md", &bad.replace("INV-2025-7", "INV-2025-9"));
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("IBAN `DE00 1234` is not valid"));
+}
+
+#[test]
 fn build_png_flag() {
     let env = Env::with_config();
     let md = env.invoice("march.md", INVOICE);

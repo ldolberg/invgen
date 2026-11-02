@@ -165,6 +165,8 @@ labels:
 from:
   logo: logo.svg          # SVG or PNG, top-left in the header; relative to the config file
 template: my-invoice.typ  # optional: your own typst layout
+payment:
+  qr: true                # EPC (SEPA) QR code on EUR invoices, scannable by banking apps
 ```
 
 `invgen template --export my-invoice.typ` writes the built-in template as a

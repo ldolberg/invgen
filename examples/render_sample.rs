@@ -54,6 +54,7 @@ fn base() -> Invoice {
             iban: Some("DE89 3704 0044 0532 0130 00".into()),
             bic: Some("COBADEFFXXX".into()),
             notes: vec![],
+            qr: true,
         },
         items: vec![LineItem {
             description: "Senior Software Engineer".into(),

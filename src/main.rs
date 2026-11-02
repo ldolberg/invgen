@@ -330,6 +330,11 @@ fn build(
     let compiled = renderer
         .compile(&inv)
         .with_context(|| format!("rendering {}", file.display()))?;
+    if let Some(w) = invgen::render::epc::warning(&inv) {
+        let st = Style::stderr();
+        let loc = format!("{}:", file.display());
+        eprintln!("{} {} {}", st.bold(&loc), st.yellow("warning:"), w);
+    }
     // Lock before writing the PDF, so the PDF stays newer than the markdown
     // (`invgen send` rebuilds a PDF older than its markdown).
     let mut locked = false;

@@ -643,6 +643,7 @@ fn set_payment_and_from() {
         iban: Some("DE89 3704 0044 0532 0130 00".into()),
         bic: None,
         notes: vec!["Please quote the invoice number".into()],
+        qr: false,
     };
     let out = set_payment(DEFAULT_CONFIG, &p).unwrap();
     assert!(

@@ -175,6 +175,18 @@
       v(4pt)
       text(fill: muted, lines(d.payment.notes))
     }
+    // EPC (SEPA) QR code. The SVG has no quiet zone: the blank space kept
+    // around it here serves as one.
+    if p.qr != none {
+      v(10pt)
+      grid(
+        columns: (22mm, 1fr),
+        column-gutter: 8pt,
+        align: (left + top, left + horizon),
+        image(p.qr, width: 22mm),
+        text(size: 7pt, fill: muted, t.scan_to_pay),
+      )
+    }
   }))
 }
 #grid(

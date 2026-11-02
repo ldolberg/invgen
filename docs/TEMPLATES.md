@@ -40,6 +40,8 @@ Text from the invoice is plain text: placing it with `#d.number` or
 * `/invoice.json`: the data described below.
 * The logo, at the path given in `d.logo` (for example `/logo.svg`), when the
   invoice has one.
+* The EPC payment QR code, an SVG at the path given in `d.payment.qr` (for
+  example `/epc-qr.svg`), when the invoice has one.
 * Any file in the template's own directory and its subdirectories, by a path
   relative to the template (`#import "parts.typ": *`, `image("bg.png")`). Paths
   cannot leave that directory, and nothing else on disk is reachable.
@@ -82,7 +84,7 @@ bump. A template can guard against a future breaking change with:
 | `currency` | string | ISO code, e.g. `EUR`. |
 | `accent` | string | Accent color as `#rrggbb` (always valid, for `rgb(d.accent)`). |
 | `from`, `to` | party | Sender and recipient (see below). |
-| `payment` | dict | `holder`, `iban`, `bic` (string or none) and `notes` (list of strings). |
+| `payment` | dict | `holder`, `iban`, `bic` (string or none), `notes` (list of strings) and `qr` (see below). |
 | `items` | list of items | Line items (see below). |
 | `subtotal` | string | Formatted money, e.g. `EUR 9,450.00`. |
 | `tax_label` | string | Tax row label (front matter `tax_label`, else the translated `tax` label). |
@@ -96,6 +98,13 @@ bump. A template can guard against a future breaking change with:
 
 A **party** has `name` (string), `address` (list of lines), `tax` (list of
 lines), `email` and `phone` (string or none). Empty lines are removed.
+
+`payment.qr` is the virtual path of the EPC (SEPA credit transfer) QR code
+image, for `image(d.payment.qr)`, or none. It is set only when the config or
+front matter has `payment.qr: true` and the invoice qualifies (EUR, a valid
+IBAN, a positive total); see [FORMAT.md](FORMAT.md#payment-qr-code). The SVG has
+no quiet zone, so keep at least 2 mm of blank space around it. Templates
+written before this field existed keep working (contract version 1).
 
 An **item** has `description` (string), `detail` (string or none), `qty`
 (formatted number, e.g. `21` or `7.5`), `unit` (string, may be empty), `rate`
@@ -129,6 +138,7 @@ through too, so a custom template can define its own translatable strings.
 | `payment_method` | Payment method |
 | `iban` | IBAN |
 | `bic` | BIC |
+| `scan_to_pay` | Scan to pay |
 | `description` | Description |
 | `qty_unit` | Qty (unit) |
 | `rate` | Rate |

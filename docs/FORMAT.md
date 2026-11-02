@@ -248,10 +248,27 @@ opened. The editor's **Send** button exports the PDF and then does the same.
 * **Templates**: see [TEMPLATES.md](TEMPLATES.md) for writing your own and the data
   it receives. `invgen template --export FILE.typ` writes the built-in one.
 
+## Payment QR code
+
+`payment.qr: true` (in the config, or per invoice with `payment:` / `config: payment:`
+in the front matter) prints an EPC QR code ("GiroCode", EPC069-12) under the payment
+details. European banking apps scan it to prefill a SEPA credit transfer with:
+
+* beneficiary: `payment.holder`, else `from.name` (at most 70 characters);
+* IBAN (spaces removed) and BIC (optional; left out when malformed);
+* amount: the invoice total in EUR, e.g. `EUR9450` or `EUR123.45` (left for the payer
+  to fill in above 999,999,999.99);
+* remittance text: the invoice number (at most 140 characters).
+
+The code uses version 002, UTF-8 and error correction level M. It is skipped when the
+currency is not EUR, the IBAN is missing or fails its checksum, or the total is not
+positive: `invgen build` then prints a warning on stderr and still writes the PDF; the
+editor preview simply shows no code. `qr: false` turns it off for one invoice.
+
 ## Front matter overrides
 
 Any of `from:`, `to:`, `payment:` may be given inline using the same shape as the
-config (`name`, `address: [..]`, `tax: [..]`, `email`, `phone` / `holder`, `iban`, `bic`, `notes`).
+config (`name`, `address: [..]`, `tax: [..]`, `email`, `phone` / `holder`, `iban`, `bic`, `notes`, `qr`).
 Inline values replace the config ones field by field.
 
 ### Overriding any config key: `config:`
@@ -313,6 +330,7 @@ payment:
   holder: ALEX MORGAN
   iban: DE89 3704 0044 0532 0130 00
   bic: COBADEFFXXX
+  qr: true                           # optional: EPC payment QR code (EUR only)
 clients:
   northwind:
     name: Northwind Labs SL

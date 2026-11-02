@@ -143,6 +143,7 @@ impl Form {
                 iban: setup::opt(&self.iban).map(|s| s.to_uppercase()),
                 bic: setup::opt(&self.bic).map(|s| s.to_uppercase()),
                 notes: Vec::new(),
+                qr: false,
             },
             client_key,
             client: ClientConfig {
