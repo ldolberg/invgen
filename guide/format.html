@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-8c359e39.js";
+            window.path_to_searchindex_js = "searchindex-edf2e956.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -427,9 +427,24 @@ to English. Use <code>config: labels:</code> in the front matter to change one i
 <li><strong>Templates</strong>: see <a href="TEMPLATES.html">TEMPLATES.md</a> for writing your own and the data
 it receives. <code>invgen template --export FILE.typ</code> writes the built-in one.</li>
 </ul>
+<h2 id="payment-qr-code"><a class="header" href="#payment-qr-code">Payment QR code</a></h2>
+<p><code>payment.qr: true</code> (in the config, or per invoice with <code>payment:</code> / <code>config: payment:</code>
+in the front matter) prints an EPC QR code (“GiroCode”, EPC069-12) under the payment
+details. European banking apps scan it to prefill a SEPA credit transfer with:</p>
+<ul>
+<li>beneficiary: <code>payment.holder</code>, else <code>from.name</code> (at most 70 characters);</li>
+<li>IBAN (spaces removed) and BIC (optional; left out when malformed);</li>
+<li>amount: the invoice total in EUR, e.g. <code>EUR9450</code> or <code>EUR123.45</code> (left for the payer
+to fill in above 999,999,999.99);</li>
+<li>remittance text: the invoice number (at most 140 characters).</li>
+</ul>
+<p>The code uses version 002, UTF-8 and error correction level M. It is skipped when the
+currency is not EUR, the IBAN is missing or fails its checksum, or the total is not
+positive: <code>invgen build</code> then prints a warning on stderr and still writes the PDF; the
+editor preview simply shows no code. <code>qr: false</code> turns it off for one invoice.</p>
 <h2 id="front-matter-overrides"><a class="header" href="#front-matter-overrides">Front matter overrides</a></h2>
 <p>Any of <code>from:</code>, <code>to:</code>, <code>payment:</code> may be given inline using the same shape as the
-config (<code>name</code>, <code>address: [..]</code>, <code>tax: [..]</code>, <code>email</code>, <code>phone</code> / <code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code>).
+config (<code>name</code>, <code>address: [..]</code>, <code>tax: [..]</code>, <code>email</code>, <code>phone</code> / <code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code>, <code>qr</code>).
 Inline values replace the config ones field by field.</p>
 <h3 id="overriding-any-config-key-config"><a class="header" href="#overriding-any-config-key-config">Overriding any config key: <code>config:</code></a></h3>
 <p>A <code>config:</code> block takes the exact shape of <code>config.yaml</code> and is deep-merged over
@@ -483,6 +498,7 @@ payment:
   holder: ALEX MORGAN
   iban: DE89 3704 0044 0532 0130 00
   bic: COBADEFFXXX
+  qr: true                           # optional: EPC payment QR code (EUR only)
 clients:
   northwind:
     name: Northwind Labs SL
