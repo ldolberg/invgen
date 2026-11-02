@@ -12,6 +12,7 @@
 mod data;
 pub mod epc;
 pub mod i18n;
+pub mod locale;
 mod world;
 
 use std::path::{Path, PathBuf};

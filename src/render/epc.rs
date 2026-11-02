@@ -258,6 +258,7 @@ mod tests {
             status: Status::Pending,
             paid_on: None,
             tax_note: None,
+            format: Default::default(),
             currency: "EUR".into(),
             from: Party {
                 name: "Alex Morgan".into(),

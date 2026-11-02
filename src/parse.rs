@@ -1,7 +1,9 @@
 //! Markdown + front matter -> Invoice. See docs/FORMAT.md for the format.
 
-use crate::config::Config;
-use crate::model::{Decimal, Invoice, LineItem, Party, Payment, Status, num};
+use crate::config::{ClientConfig, Config};
+use crate::model::{
+    Decimal, FormatOptions, Invoice, LineItem, NumberFormat, Party, Payment, Status, num,
+};
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use serde::Serialize;
@@ -10,7 +12,7 @@ use serde_yaml_ng::{Mapping, Value};
 use std::ops::Range;
 use std::path::Path;
 
-use crate::render::i18n;
+use crate::render::{i18n, locale};
 
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 #[error("line {line}: {message}")]
@@ -152,6 +154,7 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
     }
     .to_string();
     let labels = cfg.labels.clone();
+    let format = resolve_format(&fm, client, cfg)?;
     let template = match fm.str("template")? {
         Some(t) if !t.trim().is_empty() => Some(cfg.resolve_path(Path::new(t.trim()))),
         _ => cfg.template.as_deref().map(|p| cfg.resolve_path(p)),
@@ -213,6 +216,7 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         language,
         labels,
         template,
+        format,
     };
     if invoice.checked_total().is_none() {
         return Err(ParseError::new(
@@ -221,6 +225,65 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         ));
     }
     Ok(invoice)
+}
+
+/// `locale`, `number_format` and `date_format`: the front matter, then the
+/// client, then the config. `number_format` merges field by field.
+fn resolve_format(
+    fm: &FrontMatter,
+    client: Option<&ClientConfig>,
+    cfg: &Config,
+) -> Result<FormatOptions> {
+    let none = FormatOptions::default();
+    let client_fmt = client.map_or(&none, |c| &c.format);
+    let cfg_line = if fm.get("config").is_some() {
+        fm.line_of("config")
+    } else {
+        0
+    };
+    locale::check(client_fmt)
+        .map_err(|m| ParseError::new(fm.line_of("client"), format!("client {m}")))?;
+    locale::check(&cfg.format).map_err(|m| ParseError::new(cfg_line, format!("config {m}")))?;
+
+    let locale = match fm.str("locale")?.filter(|l| !l.trim().is_empty()) {
+        Some(l) => Some(
+            locale::normalize_locale(&l).map_err(|m| ParseError::new(fm.line_of("locale"), m))?,
+        ),
+        None => client_fmt
+            .locale
+            .as_deref()
+            .or(cfg.format.locale.as_deref())
+            .and_then(|l| locale::normalize_locale(l).ok()),
+    };
+
+    let inline: NumberFormat = match fm.get("number_format") {
+        None | Some(Value::Null) => NumberFormat::default(),
+        Some(v) => serde_yaml_ng::from_value(v.clone()).map_err(|e| {
+            ParseError::new(fm.line_of("number_format"), format!("`number_format`: {e}"))
+        })?,
+    };
+    let number_format = inline.or(&client_fmt.number_format.or(&cfg.format.number_format));
+    locale::check_number_format(&number_format)
+        .map_err(|m| ParseError::new(fm.line_of("number_format"), m))?;
+
+    let date_format = match fm.str("date_format")?.filter(|p| !p.trim().is_empty()) {
+        Some(p) => {
+            locale::check_date_format(&p)
+                .map_err(|m| ParseError::new(fm.line_of("date_format"), m))?;
+            Some(p)
+        }
+        None => client_fmt
+            .date_format
+            .clone()
+            .or_else(|| cfg.format.date_format.clone())
+            .filter(|p| !p.trim().is_empty()),
+    };
+
+    Ok(FormatOptions {
+        locale,
+        number_format,
+        date_format,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1160,6 +1223,7 @@ mod tests {
                 description: Some("Senior Software Engineer".into()),
                 language: None,
                 tax_note: None,
+                format: Default::default(),
             },
         );
         cfg.clients.insert("acme".into(), ClientConfig::default());
@@ -1577,6 +1641,79 @@ please.
         let err = parse("---\nconfig:\n  language: zz\n---\n- A: 1 @ 1\n").unwrap_err();
         assert_eq!(err.line, 2);
         assert!(err.message.contains("`zz`"), "{err}");
+    }
+
+    #[test]
+    fn format_options_precedence() {
+        use crate::model::{CurrencyPosition, CurrencyStyle};
+        let mut c = cfg();
+        // Nothing set: empty options, formatting follows `language`.
+        let inv = parse_invoice("---\nclient: northwind\n---\n- A: 1 @ 1\n", &c).unwrap();
+        assert!(inv.format.is_empty());
+
+        c.format.locale = Some("de".into());
+        c.format.date_format = Some("%d.%m.%Y".into());
+        c.format.number_format.thousands = Some("'".into());
+        c.format.number_format.currency = Some(CurrencyStyle::Code);
+        let client = &mut c.clients.get_mut("northwind").unwrap().format;
+        client.locale = Some("fr_ch".into());
+        client.number_format.decimal = Some(".".into());
+
+        let inv = parse_invoice("---\nclient: northwind\n---\n- A: 1 @ 1\n", &c).unwrap();
+        assert_eq!(inv.format.locale.as_deref(), Some("fr-CH"));
+        assert_eq!(inv.format.date_format.as_deref(), Some("%d.%m.%Y"));
+        // number_format merges field by field: client, then config.
+        assert_eq!(inv.format.number_format.thousands.as_deref(), Some("'"));
+        assert_eq!(inv.format.number_format.decimal.as_deref(), Some("."));
+        assert_eq!(inv.format.number_format.currency, Some(CurrencyStyle::Code));
+
+        let src = "---\nclient: northwind\nlocale: DE-at\ndate_format: \"%-d %B %Y\"\nnumber_format:\n  currency_position: after\n  decimal: \",\"\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(src, &c).unwrap();
+        assert_eq!(inv.format.locale.as_deref(), Some("de-AT"));
+        assert_eq!(inv.format.date_format.as_deref(), Some("%-d %B %Y"));
+        assert_eq!(inv.format.number_format.decimal.as_deref(), Some(","));
+        assert_eq!(
+            inv.format.number_format.currency_position,
+            Some(CurrencyPosition::After)
+        );
+        assert_eq!(inv.format.number_format.thousands.as_deref(), Some("'"));
+
+        // A `config:` block sets them for one invoice.
+        let src = "---\nconfig:\n  locale: it\n---\n- A: 1 @ 1\n";
+        assert_eq!(parse(src).unwrap().format.locale.as_deref(), Some("it"));
+    }
+
+    #[test]
+    fn invalid_format_options_point_at_their_line() {
+        let err = parse("---\ndate: 2026-03-01\nlocale: xx-YY\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3, "{err}");
+        assert!(err.message.contains("`xx-YY`"), "{err}");
+
+        let err = parse("---\ndate_format: \"%H:%M\"\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2, "{err}");
+        assert!(err.message.contains("date_format"), "{err}");
+
+        let err = parse("---\nnumber_format:\n  decimals: \",\"\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2, "{err}");
+        assert!(err.message.contains("decimals"), "{err}");
+
+        let err =
+            parse("---\nnumber_format:\n  thousands: \".\"\n  decimal: \".\"\n---\n- A: 1 @ 1\n")
+                .unwrap_err();
+        assert_eq!(err.line, 2, "{err}");
+        assert!(err.message.contains("must differ"), "{err}");
+
+        let mut c = cfg();
+        c.clients.get_mut("northwind").unwrap().format.locale = Some("zz".into());
+        let err = parse_invoice("---\nclient: northwind\n---\n- A: 1 @ 1\n", &c).unwrap_err();
+        assert_eq!(err.line, 2, "{err}");
+        assert!(
+            err.message.contains("client") && err.message.contains("`zz`"),
+            "{err}"
+        );
+
+        let err = parse("---\nconfig:\n  date_format: \"%Q\"\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2, "{err}");
     }
 
     #[test]

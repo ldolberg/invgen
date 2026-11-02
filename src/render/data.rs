@@ -10,11 +10,9 @@ use std::collections::BTreeMap;
 use serde::Serialize;
 
 use super::i18n;
+use super::locale::Formatter;
 
-use crate::model::{
-    Decimal, Invoice, Party, Status, format_amount, format_date, format_money, round_cents,
-    tax_note_preset,
-};
+use crate::model::{Decimal, Invoice, Party, Status, round_cents, tax_note_preset};
 
 /// Version of the template data contract (docs/TEMPLATES.md).
 pub const CONTRACT_VERSION: u32 = 1;
@@ -23,6 +21,8 @@ pub const CONTRACT_VERSION: u32 = 1;
 pub(super) struct View {
     contract_version: u32,
     language: String,
+    /// Formatting locale of the amounts and dates, e.g. "en" or "de-CH".
+    locale: String,
     labels: BTreeMap<String, String>,
     /// Virtual path of the logo image (e.g. "/logo.svg"), or null.
     logo: Option<String>,
@@ -91,11 +91,6 @@ struct TaxGroupView {
     tax: String,
 }
 
-/// 21 -> "21%", 7.70 -> "7.7%".
-fn format_rate(r: Decimal) -> String {
-    format!("{}%", format_qty(r))
-}
-
 /// Drop empty / whitespace-only strings.
 fn clean(v: &[String]) -> Vec<String> {
     v.iter()
@@ -154,6 +149,7 @@ impl View {
         // renders in English rather than failing in typst.
         let language = i18n::normalize_language(&inv.language).unwrap_or("en");
         let labels = i18n::labels(language, &inv.labels);
+        let fmt = Formatter::new(inv);
         let tax_label = match inv.tax_label.trim() {
             "" => labels["tax"].clone(),
             l => l.to_string(),
@@ -178,13 +174,14 @@ impl View {
         View {
             contract_version: CONTRACT_VERSION,
             language: language.to_string(),
+            locale: fmt.locale().to_string(),
             status_label: labels[&format!("status_{status}")].clone(),
             labels,
             logo,
             number: inv.number.trim().to_string(),
             status,
-            date: format_date(inv.date),
-            due: inv.due.map(format_date),
+            date: fmt.date(inv.date),
+            due: inv.due.map(|d| fmt.date(d)),
             currency: cur.to_string(),
             accent: normalize_accent(&inv.accent),
             from: (&inv.from).into(),
@@ -202,27 +199,27 @@ impl View {
                 .map(|it| ItemView {
                     description: it.description.trim().to_string(),
                     detail: opt(&it.detail),
-                    qty: format_qty(it.quantity),
+                    qty: fmt.qty(it.quantity),
                     unit: it.unit.trim().to_string(),
-                    rate: format_amount(it.rate),
-                    total: format_money(cur, it.total()),
-                    tax_rate: format_rate(inv.item_tax_rate(it)),
+                    rate: fmt.amount(it.rate),
+                    total: fmt.money(cur, it.total()),
+                    tax_rate: fmt.percent(inv.item_tax_rate(it)),
                 })
                 .collect(),
-            subtotal: format_money(cur, inv.subtotal()),
+            subtotal: fmt.money(cur, inv.subtotal()),
             tax_label,
-            tax_rate: format_rate(tax_rate),
-            tax: format_money(cur, inv.tax()),
+            tax_rate: fmt.percent(tax_rate),
+            tax: fmt.money(cur, inv.tax()),
             tax_breakdown: breakdown
                 .iter()
                 .map(|g| TaxGroupView {
-                    rate: format_rate(g.rate),
-                    base: format_money(cur, g.base),
-                    tax: format_money(cur, g.tax),
+                    rate: fmt.percent(g.rate),
+                    base: fmt.money(cur, g.base),
+                    tax: fmt.money(cur, g.tax),
                 })
                 .collect(),
             tax_note,
-            total: format_money(cur, inv.total()),
+            total: fmt.money(cur, inv.total()),
             notes: clean(&inv.notes),
             signature: opt(&inv.signature),
         }

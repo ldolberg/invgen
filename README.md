@@ -160,6 +160,8 @@ charges no tax to a client with a VAT ID and has no such note.
 ```yaml
 # config.yaml
 language: es              # en, es, de, fr, it, pt, nl; also per client and per invoice
+locale: es-MX             # optional: number and date format (default: language)
+date_format: "%d/%m/%Y"   # optional; also number_format: {thousands, decimal, ...}
 labels:
   bill_to: Cliente        # override any single label
 from:
@@ -168,6 +170,11 @@ template: my-invoice.typ  # optional: your own typst layout
 payment:
   qr: true                # EPC (SEPA) QR code on EUR invoices, scannable by banking apps
 ```
+
+Amounts and dates on the PDF follow the language (`9.450,00 €`,
+`2 de noviembre de 2026`) unless `locale`, `number_format` or `date_format` say
+otherwise; the CLI keeps `EUR 9,450.00`. See
+[docs/FORMAT.md](docs/FORMAT.md#number-and-date-formatting).
 
 `invgen template --export my-invoice.typ` writes the built-in template as a
 starting point. The data a template receives is documented and versioned in

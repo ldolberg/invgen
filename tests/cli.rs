@@ -494,6 +494,28 @@ fn list_prints_rows_and_yearly_totals() {
         .stdout(predicate::str::contains("2026 total"));
 }
 
+/// A localized invoice changes the PDF, never the CLI output.
+#[test]
+fn cli_money_format_ignores_locale() {
+    let env = Env::with_config();
+    let localized = INVOICE.replace(
+        "client: northwind",
+        "client: northwind\nlanguage: de\nlocale: de-CH\nnumber_format:\n  decimal: \",\"",
+    );
+    let md = env.invoice("INV-2025-7.md", &localized);
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("EUR 9,000.00"));
+    env.cmd()
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("EUR 9,000.00"));
+}
+
 #[test]
 fn list_fails_when_a_file_is_skipped() {
     let env = Env::with_config();

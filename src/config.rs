@@ -1,6 +1,6 @@
 //! User configuration (~/.config/invgen/config.yaml). See docs/FORMAT.md.
 
-use crate::model::{Decimal, Party, Payment, num, round_cents};
+use crate::model::{Decimal, FormatOptions, Party, Payment, num, round_cents};
 use anyhow::Context;
 use chrono::{Datelike, Local, Months, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,8 @@ tax_rate: 0                          # percent
 #                                    # exempt, outside_scope or free text
 due_days: 14
 # language: en                       # labels: en, es, de, fr, it, pt, nl
+# locale: de-CH                      # number/date format on the PDF (default: language)
+# date_format: "%d.%m.%Y"            # also number_format: {thousands, decimal, ...}
 # labels:                            # override single labels
 #   bill_to: Customer
 # template: my-invoice.typ           # custom typst template (`invgen template --export`)
@@ -79,6 +81,10 @@ pub struct ClientConfig {
     /// `reverse_charge`. See `Config::tax_note`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tax_note: Option<String>,
+    /// Number and date formatting for this client's invoices (overrides the
+    /// config field by field).
+    #[serde(flatten)]
+    pub format: FormatOptions,
 }
 
 /// Message templates for `invgen send`. Placeholders: `{number}`,
@@ -125,6 +131,10 @@ pub struct Config {
     /// (`reverse_charge`, `exempt`, `outside_scope`) or free text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tax_note: Option<String>,
+    /// Number and date formatting on the PDF (`locale`, `number_format`,
+    /// `date_format`). Empty follows `language`.
+    #[serde(flatten)]
+    pub format: FormatOptions,
     /// Directory of the loaded config file; relative `from.logo` and
     /// `template` paths resolve against it. Not part of the file.
     #[serde(skip)]
@@ -147,6 +157,7 @@ impl Default for Config {
             template: None,
             email: EmailConfig::default(),
             tax_note: None,
+            format: FormatOptions::default(),
             dir: None,
         }
     }
@@ -197,6 +208,8 @@ impl Config {
             .map(Path::to_path_buf);
         cfg.check_languages()
             .with_context(|| format!("in config {}", path.display()))?;
+        cfg.check_formats()
+            .with_context(|| format!("in config {}", path.display()))?;
         Ok(cfg)
     }
 
@@ -209,6 +222,17 @@ impl Config {
                 crate::render::i18n::normalize_language(lang)
                     .map_err(|e| anyhow::anyhow!("client `{key}`: `language`: {e}"))?;
             }
+        }
+        Ok(())
+    }
+
+    /// Reject invalid `locale`, `number_format` and `date_format` values
+    /// (global and per client).
+    pub fn check_formats(&self) -> anyhow::Result<()> {
+        crate::render::locale::check(&self.format).map_err(|e| anyhow::anyhow!("{e}"))?;
+        for (key, client) in &self.clients {
+            crate::render::locale::check(&client.format)
+                .map_err(|e| anyhow::anyhow!("client `{key}`: {e}"))?;
         }
         Ok(())
     }
@@ -556,6 +580,51 @@ mod tests {
         let text = std::fs::read_to_string(&out).unwrap();
         assert!(!text.contains("labels") && !text.contains("template") && !text.contains("logo"));
         assert!(text.contains("language: en"), "{text}");
+    }
+
+    #[test]
+    fn format_options_load_and_validate() {
+        use crate::model::{CurrencyPosition, CurrencyStyle};
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            "locale: de-CH\ndate_format: \"%d.%m.%Y\"\nnumber_format:\n  thousands: \"'\"\n  currency: code\n  currency_position: before\nclients:\n  acme:\n    name: ACME\n    locale: fr\n",
+        )
+        .unwrap();
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(cfg.format.locale.as_deref(), Some("de-CH"));
+        assert_eq!(cfg.format.date_format.as_deref(), Some("%d.%m.%Y"));
+        assert_eq!(cfg.format.number_format.thousands.as_deref(), Some("'"));
+        assert_eq!(cfg.format.number_format.currency, Some(CurrencyStyle::Code));
+        assert_eq!(
+            cfg.format.number_format.currency_position,
+            Some(CurrencyPosition::Before)
+        );
+        assert_eq!(cfg.clients["acme"].format.locale.as_deref(), Some("fr"));
+
+        // Saved back as written; unset options stay out of the file.
+        let out = dir.path().join("saved.yaml");
+        cfg.save_to(&out).unwrap();
+        let again = Config::load_from(&out).unwrap();
+        assert_eq!(again.format, cfg.format);
+        assert_eq!(again.clients["acme"].format, cfg.clients["acme"].format);
+        Config::default().save_to(&out).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        for key in ["locale", "number_format", "date_format"] {
+            assert!(!text.contains(key), "{key} in {text}");
+        }
+
+        for bad in [
+            "locale: xx\n",
+            "date_format: \"%H\"\n",
+            "number_format:\n  decimal: \"\"\n",
+            "number_format:\n  position: after\n",
+            "clients:\n  acme:\n    locale: de-CHE\n",
+        ] {
+            std::fs::write(&path, bad).unwrap();
+            assert!(Config::load_from(&path).is_err(), "{bad}");
+        }
     }
 
     #[test]

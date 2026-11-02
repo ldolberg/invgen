@@ -150,6 +150,82 @@ pub struct Invoice {
     pub labels: BTreeMap<String, String>,
     /// Custom typst template (absolute path). None uses the built-in one.
     pub template: Option<PathBuf>,
+    /// How numbers and dates are written on the PDF (`locale`,
+    /// `number_format`, `date_format`). Empty follows `language`.
+    #[serde(flatten)]
+    pub format: FormatOptions,
+}
+
+/// Formatting overrides for amounts and dates on the PDF, set in the config,
+/// per client or in the front matter (docs/FORMAT.md). Every field is
+/// optional; what is not set follows the locale, and the locale follows the
+/// invoice `language`. The CLI keeps its own fixed format.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct FormatOptions {
+    /// Formatting locale like `de` or `de-CH` (language plus optional region).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    /// Separators and currency placement; unset fields follow the locale.
+    #[serde(skip_serializing_if = "NumberFormat::is_empty")]
+    pub number_format: NumberFormat,
+    /// strftime-style pattern for dates, e.g. `%d.%m.%Y`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub date_format: Option<String>,
+}
+
+impl FormatOptions {
+    pub fn is_empty(&self) -> bool {
+        self.locale.is_none() && self.number_format.is_empty() && self.date_format.is_none()
+    }
+}
+
+/// Explicit number formatting (`number_format:`). Unset fields follow the locale.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NumberFormat {
+    /// Thousands separator; `""` for none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thousands: Option<String>,
+    /// Decimal separator.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub decimal: Option<String>,
+    /// Write the currency as a symbol (`€`) or as its ISO code (`EUR`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency: Option<CurrencyStyle>,
+    /// Currency before or after the amount.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub currency_position: Option<CurrencyPosition>,
+}
+
+impl NumberFormat {
+    pub fn is_empty(&self) -> bool {
+        *self == NumberFormat::default()
+    }
+
+    /// Fields set in `self`, the rest taken from `base`.
+    pub fn or(&self, base: &NumberFormat) -> NumberFormat {
+        NumberFormat {
+            thousands: self.thousands.clone().or_else(|| base.thousands.clone()),
+            decimal: self.decimal.clone().or_else(|| base.decimal.clone()),
+            currency: self.currency.or(base.currency),
+            currency_position: self.currency_position.or(base.currency_position),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CurrencyStyle {
+    Symbol,
+    Code,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CurrencyPosition {
+    Before,
+    After,
 }
 
 /// One row of the tax breakdown: every line taxed at `rate`.
@@ -486,6 +562,7 @@ mod tests {
             language: "en".into(),
             labels: BTreeMap::new(),
             template: None,
+            format: FormatOptions::default(),
         }
     }
 
@@ -757,6 +834,7 @@ mod tests {
             language: "en".into(),
             labels: BTreeMap::new(),
             template: None,
+            format: FormatOptions::default(),
         }
     }
 
