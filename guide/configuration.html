@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-13c6f741.js";
+            window.path_to_searchindex_js = "searchindex-8c359e39.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -259,7 +259,8 @@ clients:
 <tr><td><code>template</code></td><td>built-in</td><td>Path of a custom typst template. See <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</td></tr>
 <tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>, <code>logo</code> (SVG or PNG shown top-left; a missing file is an error).</td></tr>
 <tr><td><code>payment</code></td><td>empty</td><td><code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code> (list of lines).</td></tr>
-<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>rate</code>, <code>unit</code>, <code>description</code>.</td></tr>
+<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>rate</code>, <code>unit</code>, <code>description</code>. The client’s <code>email</code> is the recipient of <a href="cli.html#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send</code></a>.</td></tr>
+<tr><td><code>email</code></td><td>per language</td><td><code>subject</code> and <code>body</code> of the message <code>invgen send</code> prepares, with the placeholders <code>{number}</code>, <code>{total}</code>, <code>{due}</code>, <code>{client}</code>, <code>{from}</code>.</td></tr>
 </tbody>
 </table>
 </div>

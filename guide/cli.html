@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-13c6f741.js";
+            window.path_to_searchindex_js = "searchindex-8c359e39.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -256,7 +256,8 @@ and its path is printed.</p>
 <li><code>number</code> is the next free number and <code>date</code> is today;</li>
 <li>an explicit <code>due:</code> date is removed, so the due date is computed again from
 <code>due_days</code> (<code>due: false</code> and <code>due_days</code> are kept);</li>
-<li><code>status</code> becomes <code>pending</code> and <code>paid_on</code> is removed;</li>
+<li><code>status</code> becomes <code>pending</code>; <code>paid_on</code>, <code>sent_on</code> and the issued lock
+(<code>issued_hash</code>) are removed;</li>
 <li>in the body, a month with its year (<code>October 2026</code>, <code>Oct 2026</code>) or a
 <code>YYYY-MM</code> period (<code>2026-10</code>) that refers to the source invoice’s month or the
 month before it moves forward by the number of months since the source date
@@ -265,7 +266,7 @@ month before it moves forward by the number of months since the source date
 other months are left alone.</li>
 </ul>
 <p>Quantities are copied as they are, so check the number of days.</p>
-<h2 id="invgen-build-filemd--o-outpdf---png-dir"><a class="header" href="#invgen-build-filemd--o-outpdf---png-dir"><code>invgen build FILE.md [-o OUT.pdf] [--png DIR]</code></a></h2>
+<h2 id="invgen-build-filemd--o-outpdf---png-dir---strict"><a class="header" href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]</code></a></h2>
 <p>Renders one invoice.</p>
 <div class="table-wrapper">
 <table>
@@ -275,16 +276,87 @@ other months are left alone.</li>
 <tbody>
 <tr><td><code>-o</code>, <code>--output OUT.pdf</code></td><td>Where to write the PDF. Default: <code>&lt;number&gt;.pdf</code> in the same folder as <code>FILE.md</code>. Missing parent folders are created.</td></tr>
 <tr><td><code>--png DIR</code></td><td>Also write a PNG of every page into <code>DIR</code> (144 dpi): <code>&lt;number&gt;.png</code>, or <code>&lt;number&gt;-1.png</code>, <code>&lt;number&gt;-2.png</code>, … for multi-page invoices.</td></tr>
+<tr><td><code>--strict</code></td><td>Refuse to build an issued invoice whose content changed (exit status 1) instead of warning.</td></tr>
 </tbody>
 </table>
 </div>
 <p>On success it prints one line with the number, client, total and output path.
 On a parse error it prints the error and exits with status 1.</p>
+<p>The first build of a non-draft invoice <strong>locks</strong> it: invgen adds an
+<code>issued_hash: "..."</code> line to its front matter, a short hash of everything the
+invoice resolves to (your details from the config, the client, items, tax,
+dates). If a later build resolves to something else, because the file was edited
+or the config changed (a new address, a new bank account), <code>build</code> warns that the
+issued invoice changed and suggests a credit note:</p>
+<pre><code class="language-text">EINV-2026-23.md: warning: invoice EINV-2026-23 was issued and its resolved content changed since (an edit in the file or in the config, e.g. a new address). The PDF you sent no longer matches. Prefer a credit note and a new invoice; to accept the change, remove `issued_hash` from the front matter
+  issued_hash: recorded 3f2a9c4e1b7d6a05, now 81c0d2e4f5a69b37 (building anyway; --strict refuses)
+</code></pre>
+<p>Changing <code>status</code> (for example to <code>paid</code>) does not break the lock, and drafts are
+never locked. Delete the <code>issued_hash</code> line to accept a change on purpose. See
+<a href="format.html">the format reference</a> and docs/FORMAT.md for the details.</p>
 <h2 id="invgen-watch-filemd--o-outpdf"><a class="header" href="#invgen-watch-filemd--o-outpdf"><code>invgen watch FILE.md [-o OUT.pdf]</code></a></h2>
 <p>Builds the PDF once, then again every time <code>FILE.md</code> is saved, until you press
 Ctrl+C. The config is read again on every rebuild, so config edits are picked
 up too. A failed build prints the error and keeps watching. <code>-o</code> works as in
-<code>build</code>. See the <a href="recipes/watch.html">watch mode recipe</a>.</p>
+<code>build</code>. See the <a href="recipes/watch.html">watch mode recipe</a>. Unlike <code>build</code>, <code>watch</code>
+never locks an invoice (it warns about a changed issued invoice, though).</p>
+<h2 id="invgen-send-filenumber---dry-run---mark-sent"><a class="header" href="#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send FILE|NUMBER [--dry-run] [--mark-sent]</code></a></h2>
+<p>Emails an invoice through your own mail client. The argument is a markdown file,
+or an invoice number in the invoices directory (<code>EINV-2026-23</code>, or just <code>23</code>).</p>
+<ol>
+<li>If <code>&lt;number&gt;.pdf</code> is missing, or older than the invoice file or the config, it
+is built first (exactly like <code>build</code>, so the invoice gets locked).</li>
+<li>The desktop mail client opens with the client’s <code>email</code> as recipient, a subject
+and a body, and the PDF attached. Review it there and press Send.</li>
+</ol>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--dry-run</code></td><td>Print the message and the command that would be run; build and open nothing.</td></tr>
+<tr><td><code>--mark-sent</code></td><td>After the mail client opened, record <code>sent_on: &lt;today&gt;</code> in the front matter.</td></tr>
+</tbody>
+</table>
+</div>
+<p>The subject and body come from the <code>email:</code> block of the config, with the
+placeholders <code>{number}</code>, <code>{total}</code>, <code>{due}</code>, <code>{client}</code> and <code>{from}</code>:</p>
+<pre><code class="language-yaml">email:
+  subject: "Invoice {number}"
+  body: |
+    Hello,
+
+    please find attached invoice {number} for {total}, due {due}.
+
+    Best regards,
+    {from}
+</code></pre>
+<p>Without that block, built-in texts in the invoice language are used (English,
+Spanish, German, French, Italian, Portuguese or Dutch).</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Platform</th><th>How the mail client opens</th></tr>
+</thead>
+<tbody>
+<tr><td>Linux</td><td><code>xdg-email</code> with recipient, subject, body and the PDF attached. Without <code>xdg-email</code>, a <code>mailto:</code> link (attach the printed PDF path by hand).</td></tr>
+<tr><td>macOS</td><td>Mail, through <code>osascript</code>, with everything filled in and the PDF attached. If that fails, a <code>mailto:</code> link and the printed PDF path.</td></tr>
+<tr><td>Windows</td><td>A <code>mailto:</code> link in the default mail client; attach the printed PDF path by hand (mailto cannot carry attachments).</td></tr>
+</tbody>
+</table>
+</div>
+<p>invgen never sends mail itself and never stores SMTP credentials or passwords.</p>
+<pre><code class="language-console">$ invgen send 23 --dry-run
+To: billing@example.com
+Subject: Invoice EINV-2026-23
+Attachment: /home/alex/Documents/Invoices/EINV-2026-23.pdf
+
+Hello,
+...
+would run: xdg-email --utf8 --subject 'Invoice EINV-2026-23' ...
+fallback: xdg-open 'mailto:billing@example.com?subject=...'
+</code></pre>
 <h2 id="invgen-list"><a class="header" href="#invgen-list"><code>invgen list</code></a></h2>
 <pre><code class="language-text">invgen list [--year YYYY] [--client KEY|NAME] [--status STATUS]... [--unpaid] [--format table|csv|json]
 </code></pre>
@@ -348,7 +420,9 @@ invoices/EINV-2026-28.md:3: error: EINV-2026-28 is dated 2026-09-01, before the 
 <li>a duplicate number, or the same sequence number used twice under one prefix
 (sequences are global across years, so <code>EINV-2025-5</code> and <code>EINV-2026-05</code> collide);</li>
 <li>a higher number dated before a lower one (drafts are ignored here);</li>
-<li>an invoice whose client has no name.</li>
+<li>an invoice whose client has no name;</li>
+<li>an issued invoice (with <code>issued_hash</code>) whose resolved content changed since it
+was exported, see <a href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>build</code></a>.</li>
 </ul>
 <p>Warnings:</p>
 <ul>
@@ -405,7 +479,9 @@ replaced with <code>--force</code>. The data a template receives is documented i
 <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <p><code>0</code> on success, <code>1</code> on any error (bad arguments, unreadable files, a parse error,
-a skipped file in <code>list</code>, problems found by <code>check</code>, an invalid config after
+a skipped file in <code>list</code>, problems found by <code>check</code>, a changed issued invoice
+with <code>build --strict</code>, a mail client that cannot be opened by <code>send</code>, an invalid
+config after
 <code>config --edit</code>).</p>
 
                     </main>
