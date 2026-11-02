@@ -31,4 +31,6 @@ typst-pdf = "0.15.1"
 typst-render = "0.15.1"
 
 [dev-dependencies]
+assert_cmd = "2.2.2"
+predicates = "3.1.4"
 tempfile = "3.27.0"
