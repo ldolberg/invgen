@@ -81,6 +81,38 @@ Any of `from:`, `to:`, `payment:` may be given inline using the same shape as th
 config (`name`, `address: [..]`, `tax: [..]`, `email`, `phone` / `holder`, `iban`, `bic`, `notes`).
 Inline values replace the config ones field by field.
 
+### Overriding any config key: `config:`
+
+A `config:` block takes the exact shape of `config.yaml` and is deep-merged over
+it for this invoice only. Mappings merge key by key, while scalars and lists replace.
+Set a value to `null` to remove an optional field (`phone`, `email`, a client's
+`tax_rate`...).
+
+```yaml
+---
+client: northwind
+config:
+  number_prefix: INV        # auto-numbering for this invoice uses INV-...
+  due_days: 30
+  from:
+    name: Morgan Studio     # other `from` fields (address, tax...) are kept
+    phone: null             # hide the phone on this invoice
+  payment:
+    iban: CH93 0076 2011 6238 5295 7   # bic and holder are kept
+  clients:
+    northwind:
+      currency: CHF
+      address: [Bahnhofstrasse 1, "8001 Zurich", Switzerland]
+---
+```
+
+The block edits the config itself, so the usual precedence then applies to the
+merged result: top-level front matter keys (`currency`, `tax_rate`, `due_days`,
+`from:`, `to:`, `payment:`) win, then the client entry, then the global keys. So a
+global `tax_rate` in the block does not beat a client's own `tax_rate`; override it
+under `clients:` (or set it to `null` there) or use the top-level `tax_rate:` key.
+An invalid override is reported at the `config:` line.
+
 ## Config (`~/.config/invgen/config.yaml`)
 
 ```yaml

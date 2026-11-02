@@ -39,6 +39,23 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
     let fm = FrontMatter::parse(&doc)?;
     let body = parse_body(&src[doc.body_start..], doc.body_start, &lines)?;
 
+    // A `config:` block overrides any config key for this invoice only.
+    let overridden;
+    let cfg = match fm.get("config") {
+        None | Some(Value::Null) => cfg,
+        Some(Value::Mapping(over)) => {
+            overridden =
+                override_config(cfg, over).map_err(|m| ParseError::new(fm.line_of("config"), m))?;
+            &overridden
+        }
+        Some(_) => {
+            return Err(ParseError::new(
+                fm.line_of("config"),
+                "`config` must be a block of config keys (e.g. `config:` then `  due_days: 30`)",
+            ));
+        }
+    };
+
     // Client defaults, then inline overrides.
     let client = match fm.str("client")? {
         Some(key) => Some(cfg.clients.get(&key).ok_or_else(|| {
@@ -844,10 +861,70 @@ fn parse_number(s: &str) -> Option<f64> {
         .filter(|n| n.is_finite())
 }
 
+/// Deep-merge `over` onto `cfg`: mappings merge key by key (recursively),
+/// anything else (scalars, lists, null) replaces the config value.
+fn override_config(cfg: &Config, over: &Mapping) -> std::result::Result<Config, String> {
+    fn merge(base: &mut Value, over: &Value) {
+        match (base, over) {
+            (Value::Mapping(b), Value::Mapping(o)) => {
+                for (k, v) in o {
+                    match b.get_mut(k) {
+                        Some(slot) => merge(slot, v),
+                        None => {
+                            b.insert(k.clone(), v.clone());
+                        }
+                    }
+                }
+            }
+            (slot, v) => *slot = v.clone(),
+        }
+    }
+    let mut value = serde_yaml_ng::to_value(cfg).map_err(|e| format!("config: {e}"))?;
+    merge(&mut value, &Value::Mapping(over.clone()));
+    let mut merged: Config =
+        serde_yaml_ng::from_value(value).map_err(|e| format!("config override: {e}"))?;
+    merged.invoices_dir = crate::config::expand_tilde(&merged.invoices_dir);
+    Ok(merged)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::config::ClientConfig;
+
+    #[test]
+    fn config_block_overrides_any_key() {
+        let src = "---\nclient: northwind\nconfig:\n  due_days: 30\n  number_prefix: INV\n  tax_rate: 3\n  from:\n    name: Morgan Studio\n    phone: null\n  payment:\n    iban: XX00 0000\n  clients:\n    northwind:\n      currency: CHF\n      tax_rate: null\n      name: Northwind GmbH\n---\n- A: 1 @ 100\n";
+        let inv = parse(src).unwrap();
+        assert_eq!(inv.due, Some(inv.date + Duration::days(30)));
+        assert!(inv.number.starts_with("INV-"));
+        assert_eq!(inv.from.name, "Morgan Studio");
+        assert_eq!(inv.from.phone, None);
+        assert_eq!(inv.from.email.as_deref(), Some("alex@example.com"));
+        assert_eq!(inv.payment.iban.as_deref(), Some("XX00 0000"));
+        assert_eq!(inv.payment.bic.as_deref(), Some("COBADEFFXXX"));
+        assert_eq!(inv.to.name, "Northwind GmbH");
+        assert_eq!(inv.to.tax, vec!["Tax ID: B12345678".to_string()]);
+        assert_eq!(inv.currency, "CHF");
+        // client tax_rate removed, so the overridden config default applies
+        assert_eq!(inv.tax_rate, 3.0);
+    }
+
+    #[test]
+    fn config_block_errors_point_at_key() {
+        let err = parse("---\ndate: 2026-01-01\nconfig: 5\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3);
+        let err = parse("---\ndate: 2026-01-01\nconfig:\n  due_days: soon\n---\n- A: 1 @ 1\n")
+            .unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(err.message.contains("config override"), "{}", err.message);
+    }
+
+    #[test]
+    fn inline_overrides_beat_config_block() {
+        let src = "---\nconfig:\n  from:\n    name: From Config Block\nfrom:\n  name: From Inline\n---\n- A: 1 @ 1\n";
+        assert_eq!(parse(src).unwrap().from.name, "From Inline");
+    }
 
     fn cfg() -> Config {
         let mut cfg = Config {
