@@ -17,6 +17,7 @@ contains every invoice that did parse.
 | `date` | string | Issue date, `YYYY-MM-DD`. |
 | `due` | string or null | Due date, `YYYY-MM-DD`. Empty in CSV, `null` in JSON when the invoice has no due date (`due: false`). |
 | `status` | string | Effective status: `pending`, `paid`, `overdue` or `draft`. A `pending` invoice past its due date is `overdue` (see [FORMAT.md](FORMAT.md)). |
+| `paid_on` | string or null | Payment date, `YYYY-MM-DD`, from the front matter `paid_on:` (set by `invgen paid`). Empty in CSV, `null` in JSON when not recorded. |
 | `client_key` | string or null | The `client:` key of the front matter. Empty in CSV, `null` in JSON for invoices with an inline `to:` block only. |
 | `client` | string | Client name as printed on the invoice. |
 | `currency` | string | ISO code, e.g. `EUR`. |
@@ -39,9 +40,9 @@ quoted with double quotes when it contains a comma, a double quote or a line
 break; a double quote inside a field is doubled.
 
 ```text
-number,date,due,status,client_key,client,currency,subtotal,tax,total,file
-EINV-2026-22,2026-10-01,2026-10-15,paid,northwind,Northwind Labs SL,EUR,12450.90,0.00,12450.90,/home/alex/Documents/Invoices/EINV-2026-22.md
-EINV-2026-23,2026-11-02,2026-11-16,pending,northwind,Northwind Labs SL,EUR,9450.00,0.00,9450.00,/home/alex/Documents/Invoices/EINV-2026-23.md
+number,date,due,status,paid_on,client_key,client,currency,subtotal,tax,total,file
+EINV-2026-22,2026-10-01,2026-10-15,paid,2026-10-12,northwind,Northwind Labs SL,EUR,12450.90,0.00,12450.90,/home/alex/Documents/Invoices/EINV-2026-22.md
+EINV-2026-23,2026-11-02,2026-11-16,pending,,northwind,Northwind Labs SL,EUR,9450.00,0.00,9450.00,/home/alex/Documents/Invoices/EINV-2026-23.md
 ```
 
 ## JSON
@@ -66,6 +67,7 @@ match gives `[]`). Each object has the fields above in that order, plus
     "date": "2026-11-02",
     "due": "2026-11-16",
     "status": "pending",
+    "paid_on": null,
     "client_key": "northwind",
     "client": "Northwind Labs SL",
     "currency": "EUR",

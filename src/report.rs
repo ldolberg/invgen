@@ -305,11 +305,12 @@ pub fn outstanding(entries: &[&Entry], today: NaiveDate) -> BTreeMap<String, Agi
 // Export
 
 /// CSV columns, in order. Documented in docs/EXPORT.md.
-pub const CSV_HEADER: [&str; 11] = [
+pub const CSV_HEADER: [&str; 12] = [
     "number",
     "date",
     "due",
     "status",
+    "paid_on",
     "client_key",
     "client",
     "currency",
@@ -331,6 +332,7 @@ pub struct ExportRow {
     pub date: String,
     pub due: Option<String>,
     pub status: &'static str,
+    pub paid_on: Option<String>,
     pub client_key: Option<String>,
     pub client: String,
     pub currency: String,
@@ -362,6 +364,7 @@ impl ExportRow {
             date: inv.date.to_string(),
             due: inv.due.map(|d| d.to_string()),
             status: inv.effective_status(today).label(),
+            paid_on: inv.paid_on.map(|d| d.to_string()),
             client_key: e.client_key.clone(),
             client: inv.to.name.clone(),
             currency: inv.currency.clone(),
@@ -384,12 +387,13 @@ impl ExportRow {
         }
     }
 
-    fn csv_fields(&self) -> [&str; 11] {
+    fn csv_fields(&self) -> [&str; 12] {
         [
             &self.number,
             &self.date,
             self.due.as_deref().unwrap_or(""),
             self.status,
+            self.paid_on.as_deref().unwrap_or(""),
             self.client_key.as_deref().unwrap_or(""),
             &self.client,
             &self.currency,
@@ -773,6 +777,7 @@ mod tests {
                 notes: vec![],
                 signature: None,
                 accent: "#111827".into(),
+                paid_on: None,
                 language: "en".into(),
                 labels: Default::default(),
                 template: None,
@@ -957,7 +962,7 @@ mod tests {
         assert_eq!(lines[0], CSV_HEADER.join(","));
         assert_eq!(
             lines[1],
-            "INV-2026-2,2026-01-10,2026-01-24,overdue,northwind,\"Northwind Labs, SL\",EUR,9258.75,1944.34,11203.09,/inv/INV-2026-2.md"
+            "INV-2026-2,2026-01-10,2026-01-24,overdue,,northwind,\"Northwind Labs, SL\",EUR,9258.75,1944.34,11203.09,/inv/INV-2026-2.md"
         );
         assert_eq!(lines[2], "");
 
@@ -965,6 +970,7 @@ mod tests {
         let row = &json[0];
         assert_eq!(row["number"], "INV-2026-2");
         assert_eq!(row["status"], "overdue");
+        assert!(row["paid_on"].is_null());
         assert_eq!(row["total"], "11203.09");
         assert_eq!(row["items"][0]["quantity"], "7.5");
         assert_eq!(row["items"][0]["rate"], "1234.5");

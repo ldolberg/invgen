@@ -75,6 +75,23 @@ pub enum Status {
     Draft,
 }
 
+impl std::str::FromStr for Status {
+    type Err = String;
+
+    /// `pending`, `paid`, `overdue` or `draft`, case-insensitive.
+    fn from_str(s: &str) -> Result<Status, String> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "pending" => Ok(Status::Pending),
+            "paid" => Ok(Status::Paid),
+            "overdue" => Ok(Status::Overdue),
+            "draft" => Ok(Status::Draft),
+            _ => Err(format!(
+                "unknown status `{s}` (use pending, paid, overdue or draft)"
+            )),
+        }
+    }
+}
+
 impl Status {
     pub fn label(&self) -> &'static str {
         match self {
@@ -94,6 +111,9 @@ pub struct Invoice {
     pub date: NaiveDate,
     pub due: Option<NaiveDate>,
     pub status: Status,
+    /// When the invoice was paid (front matter `paid_on`), if recorded.
+    #[serde(default)]
+    pub paid_on: Option<NaiveDate>,
     /// ISO code, e.g. "EUR".
     pub currency: String,
     pub from: Party,
@@ -179,6 +199,15 @@ impl Invoice {
     /// Effective status label with days late, e.g. `pending` or `overdue 12d`.
     pub fn status_display(&self, today: NaiveDate) -> String {
         status_display(self.effective_status(today), self.days_overdue(today))
+    }
+
+    /// [`Invoice::status_display`] plus the payment date when one is recorded
+    /// on a paid invoice: `paid 2026-11-20`.
+    pub fn status_detail(&self, today: NaiveDate) -> String {
+        match (self.status, self.paid_on) {
+            (Status::Paid, Some(d)) => format!("paid {}", d.format("%Y-%m-%d")),
+            _ => self.status_display(today),
+        }
     }
 }
 
@@ -359,6 +388,7 @@ mod tests {
             date: NaiveDate::from_ymd_opt(2026, 1, 1).unwrap(),
             due: None,
             status: Status::Pending,
+            paid_on: None,
             currency: "EUR".into(),
             from: Party::default(),
             to: Party::default(),
@@ -529,6 +559,7 @@ mod tests {
             date: NaiveDate::from_ymd_opt(2026, 10, 1).unwrap(),
             due,
             status,
+            paid_on: None,
             currency: "EUR".into(),
             from: Party::default(),
             to: Party::default(),
@@ -580,5 +611,17 @@ mod tests {
         );
         assert_eq!(late.status_display(today), "overdue 12d");
         assert_eq!(future.status_display(today), "pending");
+        assert_eq!(late.status_detail(today), "overdue 12d");
+        let mut paid = dated_invoice(Status::Paid, Some(d(10, 21)));
+        assert_eq!(paid.status_detail(today), "paid");
+        paid.paid_on = Some(d(10, 30));
+        assert_eq!(paid.status_detail(today), "paid 2026-10-30");
+        assert_eq!("Paid ".parse::<Status>(), Ok(Status::Paid));
+        assert!(
+            "sent"
+                .parse::<Status>()
+                .unwrap_err()
+                .contains("unknown status")
+        );
     }
 }

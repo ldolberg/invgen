@@ -1,7 +1,8 @@
 //! `invgen` command line. With no arguments (or `invgen edit FILE`) it opens the GUI.
 
 use anyhow::{Context, Result, bail};
-use chrono::{Datelike, Local};
+use chrono::{Datelike, Local, NaiveDate};
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand};
 use invgen::config::{Config, DEFAULT_CONFIG};
 use invgen::model::{Decimal, Invoice, Status, format_amount, format_money};
@@ -51,9 +52,14 @@ enum Cmd {
     },
     /// Create the next invoice in the invoices directory.
     New {
-        /// Client key from the config (default: the first client).
+        /// Client key from the config (default: the first client). With
+        /// `--from last`, duplicate that client's latest invoice.
         #[arg(long, value_name = "KEY")]
         client: Option<String>,
+        /// Duplicate an existing invoice (a number, a file, or `last`) instead
+        /// of starting from the template.
+        #[arg(long, value_name = "NUMBER|last")]
+        from: Option<String>,
         /// Open the new invoice in the editor.
         #[arg(long)]
         open: bool,
@@ -93,6 +99,22 @@ enum Cmd {
         /// Exit with status 1 on warnings too, not only on errors.
         #[arg(long)]
         strict: bool,
+    },
+    /// Mark an invoice as paid: sets `status: paid` and `paid_on`.
+    Paid {
+        /// Invoice file, or its number in the invoices directory (EINV-2026-23 or 23).
+        invoice: String,
+        /// Payment date (default: the date already recorded, else today).
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        on: Option<NaiveDate>,
+    },
+    /// Set the written status of an invoice (any status but paid removes `paid_on`).
+    Status {
+        /// Invoice file, or its number in the invoices directory (EINV-2026-23 or 23).
+        invoice: String,
+        #[arg(value_parser = PossibleValuesParser::new(["pending", "paid", "overdue", "draft"])
+            .map(|s| s.parse::<Status>().unwrap_or_default()))]
+        status: Status,
     },
     /// Show the config path, creating a commented default if it is missing.
     Config {
@@ -146,9 +168,12 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 None => Ok(ExitCode::FAILURE),
             }
         }
-        Some(Cmd::New { client, open }) => {
+        Some(Cmd::New { client, from, open }) => {
             let cfg = load_config(config_path.as_deref())?;
-            cmd_new(&cfg, client.as_deref(), open, config_path)
+            match from {
+                Some(from) => cmd_new_from(&cfg, &from, client.as_deref(), open, config_path),
+                None => cmd_new(&cfg, client.as_deref(), open, config_path),
+            }
         }
         Some(Cmd::Watch { file, output }) => {
             cmd_watch(config_path.as_deref(), &file, output.as_deref())
@@ -172,6 +197,14 @@ fn run(cli: Cli) -> Result<ExitCode> {
         Some(Cmd::Check { strict }) => {
             let cfg = load_config(config_path.as_deref())?;
             cmd_check(&cfg, strict)
+        }
+        Some(Cmd::Paid { invoice, on }) => {
+            let cfg = load_config(config_path.as_deref())?;
+            cmd_set_status(&cfg, &invoice, Status::Paid, on)
+        }
+        Some(Cmd::Status { invoice, status }) => {
+            let cfg = load_config(config_path.as_deref())?;
+            cmd_set_status(&cfg, &invoice, status, None)
         }
         Some(Cmd::Config { edit }) => cmd_config(config_path.as_deref(), edit),
         Some(Cmd::Template { export, force }) => cmd_template(export.flatten().as_deref(), force),
@@ -277,6 +310,16 @@ fn cmd_new(
     open: bool,
     config_path: Option<PathBuf>,
 ) -> Result<ExitCode> {
+    check_client(cfg, client)?;
+    let path = cfg.write_new_invoice(client)?;
+    println!("{}", path.display());
+    if open {
+        invgen::gui::run(Some(path), config_path)?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn check_client(cfg: &Config, client: Option<&str>) -> Result<()> {
     if let Some(key) = client
         && !cfg.clients.contains_key(key)
     {
@@ -288,11 +331,61 @@ fn cmd_new(
         }
         bail!("unknown client `{key}` (known: {})", known.join(", "));
     }
-    let path = cfg.write_new_invoice(client)?;
+    Ok(())
+}
+
+/// `invgen new --from <NUMBER|FILE|last>`: see [`invgen::duplicate`].
+fn cmd_new_from(
+    cfg: &Config,
+    from: &str,
+    client: Option<&str>,
+    open: bool,
+    config_path: Option<PathBuf>,
+) -> Result<ExitCode> {
+    check_client(cfg, client)?;
+    let source = if from == "last" {
+        invgen::lookup::last(cfg, client)?
+    } else if client.is_some() {
+        bail!("--client only applies to `--from last`")
+    } else {
+        invgen::lookup::resolve(cfg, from)?
+    };
+    let today = Local::now().date_naive();
+    let path = invgen::duplicate::duplicate_file(cfg, &source, today)?;
     println!("{}", path.display());
     if open {
         invgen::gui::run(Some(path), config_path)?;
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `invgen paid` / `invgen status`: rewrite only the front matter lines.
+fn cmd_set_status(
+    cfg: &Config,
+    invoice: &str,
+    status: Status,
+    on: Option<NaiveDate>,
+) -> Result<ExitCode> {
+    let path = invgen::lookup::resolve(cfg, invoice)?;
+    let src =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let today = Local::now().date_naive();
+    let out = invgen::frontmatter::set_status(&src, status, on, today)
+        .with_context(|| format!("editing {}", path.display()))?;
+    if out != src {
+        std::fs::write(&path, &out).with_context(|| format!("writing {}", path.display()))?;
+    }
+    let st = Style::stdout();
+    let paid_on = invgen::frontmatter::get(&out, "paid_on")?
+        .filter(|_| status == Status::Paid)
+        .map(|d| format!(" on {d}"))
+        .unwrap_or_default();
+    println!(
+        "{}{}  {}",
+        st.green_bold(status.label()),
+        paid_on,
+        st.dim(&path.display().to_string())
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -450,7 +543,7 @@ fn cmd_list(cfg: &Config, filter: &Filter, format: ListFormat) -> Result<ExitCod
         }
         last_year = Some(year);
         let client: String = inv.to.name.chars().take(w_client).collect();
-        let status = inv.status_display(today);
+        let status = inv.status_detail(today);
         let status = match inv.effective_status(today) {
             Status::Paid => st.green(&status),
             Status::Overdue => st.red_bold(&status),

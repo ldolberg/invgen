@@ -18,6 +18,7 @@ fn base() -> Invoice {
         date: NaiveDate::from_ymd_opt(2026, 11, 1).unwrap(),
         due: NaiveDate::from_ymd_opt(2026, 11, 15),
         status: Status::Pending,
+        paid_on: None,
         currency: "EUR".into(),
         from: Party {
             name: "Alex Morgan".into(),
