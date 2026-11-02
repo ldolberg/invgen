@@ -33,6 +33,7 @@ clients:
     tax: ["Tax ID: B12345678"]
     currency: EUR
     tax_rate: 0
+    tax_note: reverse_charge             # EU B2B cross-border: VAT due by the client
     language: es                       # invoices for this client are in Spanish
     rate: 450
     unit: days
