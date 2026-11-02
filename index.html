@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>invgen Flatpak</title>
+<link rel="icon" href="icon.svg">
+<style>
+  :root { --bg:#fafafa; --fg:#111827; --muted:#6b7280; --card:#fff; --line:#e5e7eb; --accent:#4f46e5; --code:#f3f4f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f1115; --fg:#e5e7eb; --muted:#9ca3af; --card:#171a21; --line:#262a33; --accent:#818cf8; --code:#1f232b; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.6 Inter, system-ui, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:56px 16px 80px; }
+  header { display:flex; gap:16px; align-items:center; margin-bottom:24px; }
+  header img { width:64px; height:64px; }
+  h1 { margin:0; font-size:2rem; letter-spacing:-0.02em; }
+  .sub { margin:0; color:var(--muted); }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:24px; margin:20px 0; }
+  h2 { margin:0 0 8px; font-size:1.05rem; }
+  pre { background:var(--code); border-radius:10px; padding:14px 16px; overflow-x:auto; margin:10px 0 0; font:14px/1.5 "JetBrains Mono", ui-monospace, monospace; }
+  a { color:var(--accent); }
+  .btn { display:inline-block; background:var(--accent); color:#fff; text-decoration:none; padding:10px 18px; border-radius:10px; font-weight:600; }
+  .shot { width:100%; border-radius:12px; border:1px solid var(--line); margin-top:8px; }
+  small { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="icon.svg" alt="">
+    <div>
+      <h1>invgen</h1>
+      <p class="sub">Write invoices in markdown, export clean PDFs. Live preview, native on Linux.</p>
+    </div>
+  </header>
+
+  <div class="card">
+    <h2>One-click install</h2>
+    <p>Open this file with your software center (GNOME Software, Discover, Mint Software Manager):</p>
+    <a class="btn" href="io.github.ldolberg.invgen.flatpakref">Install invgen</a>
+  </div>
+
+  <div class="card">
+    <h2>Command line</h2>
+    <pre>flatpak install --user https://ldolberg.github.io/invgen/io.github.ldolberg.invgen.flatpakref
+flatpak run io.github.ldolberg.invgen</pre>
+    <p><small>Updates arrive with <code>flatpak update</code>. The runtime comes from Flathub.</small></p>
+  </div>
+
+  <div class="card">
+    <h2>Or add the repository</h2>
+    <pre>flatpak remote-add --user --if-not-exists invgen https://ldolberg.github.io/invgen/invgen.flatpakrepo
+flatpak install --user invgen io.github.ldolberg.invgen</pre>
+    <p><small>The repository is signed; the public key is <a href="invgen.gpg">invgen.gpg</a>.</small></p>
+  </div>
+
+  <img class="shot" src="https://raw.githubusercontent.com/ldolberg/invgen/main/docs/screenshot.png" alt="invgen editor with live PDF preview">
+  <p><small>Source, docs and release tarballs: <a href="https://github.com/ldolberg/invgen">github.com/ldolberg/invgen</a></small></p>
+</main>
+</body>
+</html>
