@@ -1,5 +1,7 @@
 # invgen
 
+[![CI](https://github.com/ldolberg/invgen/actions/workflows/ci.yml/badge.svg)](https://github.com/ldolberg/invgen/actions/workflows/ci.yml)
+
 Write invoices in markdown, get clean PDFs. A native Linux editor shows a live
 preview as you type; a small CLI builds, watches and lists invoices from the
 terminal. Your details, bank and clients live once in a config file, so each
