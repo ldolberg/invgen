@@ -7,6 +7,48 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+/// Commented starter config written by `invgen config` and by the editor's
+/// first-run setup (which fills in the values and keeps the comments).
+pub const DEFAULT_CONFIG: &str = r#"# invgen configuration. See docs/FORMAT.md for the invoice format.
+# Static data lives here once; invoice files only say what changes.
+
+invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports .pdf
+number_prefix: INV                   # numbers look like INV-<year>-<seq>
+currency: EUR
+tax_rate: 0                          # percent
+due_days: 14
+# language: en                       # labels: en, es, de, fr, it, pt, nl
+# labels:                            # override single labels
+#   bill_to: Customer
+# template: my-invoice.typ           # custom typst template (`invgen template --export`)
+
+from:
+  name: Your Name
+  address: [Street 1, City, "00000", Country]
+  tax: ["VAT ID: XX00000000"]
+  email: you@example.com
+  # phone: "+00 000 000 000"
+  # logo: logo.svg                   # SVG or PNG; relative to this file
+
+payment:
+  holder: YOUR NAME
+  iban: XX00 0000 0000 0000 0000 00
+  bic: XXXXXXXXXXX
+  # notes: ["Bank name", "Please quote the invoice number"]
+
+clients:
+  acme:
+    name: ACME Corp
+    address: [Street 1, City, "00000", Country]
+    tax: ["Tax ID: X00000000"]
+    # currency: EUR      # optional per-client defaults
+    # tax_rate: 0
+    # language: es
+    rate: 450            # default rate used by `invgen new`
+    unit: days
+    description: Consulting services
+"#;
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ClientConfig {
@@ -172,6 +214,26 @@ impl Config {
     /// with one item prefilled from client defaults and "<Month YYYY> period" detail for the previous month.
     pub fn new_invoice_markdown(&self, client: Option<&str>) -> String {
         self.invoice_template(client, Local::now().date_naive())
+    }
+
+    /// Write the next invoice for `client` (see `new_invoice_markdown`) into
+    /// `invoices_dir` as `<number>.md` and return its path. Fails if that file
+    /// already exists. Used by `invgen new` and the editor.
+    pub fn write_new_invoice(&self, client: Option<&str>) -> anyhow::Result<PathBuf> {
+        let md = self.new_invoice_markdown(client);
+        let number = crate::parse::parse_invoice(&md, self)
+            .map(|inv| inv.number)
+            .unwrap_or_else(|_| self.next_number(Local::now().year()));
+        std::fs::create_dir_all(&self.invoices_dir)
+            .with_context(|| format!("creating {}", self.invoices_dir.display()))?;
+        let path = self
+            .invoices_dir
+            .join(format!("{}.md", crate::model::file_stem(&number)));
+        if path.exists() {
+            anyhow::bail!("{} already exists", path.display());
+        }
+        std::fs::write(&path, md).with_context(|| format!("writing {}", path.display()))?;
+        Ok(path)
     }
 
     /// `new_invoice_markdown` with an explicit "today", for deterministic output.

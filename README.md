@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ldolberg/invgen/actions/workflows/ci.yml/badge.svg)](https://github.com/ldolberg/invgen/actions/workflows/ci.yml)
 
-Write invoices in markdown, get clean PDFs. A native Linux editor shows a live
+Write invoices in markdown, get clean PDFs. A native desktop editor shows a live
 preview as you type; a small CLI builds, watches and lists invoices from the
 terminal. Your details, bank and clients live once in a config file, so each
 invoice is a few lines.
@@ -16,6 +16,8 @@ CLI, editor, recipes, FAQ) | [Contributing](CONTRIBUTING.md)
 
 ## Install
 
+### Linux
+
 Flatpak (any distro, auto-updates with `flatpak update`):
 
 ```sh
@@ -26,23 +28,64 @@ The app reads the same `~/.config/invgen/config.yaml` as the native build and ha
 access to `~/Documents`; open files elsewhere through the file chooser. Install page:
 <https://ldolberg.github.io/invgen/>.
 
-Prebuilt (x86_64 Linux): grab the tarball from
+Prebuilt (x86_64): grab `invgen-*-x86_64-linux.tar.gz` from
 [Releases](https://github.com/ldolberg/invgen/releases), then
 
 ```sh
 tar xzf invgen-*-x86_64-linux.tar.gz && ./invgen-*/install.sh
 ```
 
-From source (Rust 1.85+):
+### macOS
+
+Grab `invgen-*-macos-universal.zip` (Apple Silicon and Intel, macOS 11+) from
+[Releases](https://github.com/ldolberg/invgen/releases), unzip it and put `invgen`
+on your `PATH`. The binary is not notarized, so clear the quarantine flag once:
 
 ```sh
-make install      # binary to ~/.local/bin, desktop entry and icon to ~/.local/share
+unzip invgen-*-macos-universal.zip && cd invgen-*-macos-universal
+xattr -d com.apple.quarantine invgen
+sudo install -m755 invgen /usr/local/bin/
+```
+
+The config lives in `~/Library/Application Support/invgen/config.yaml`.
+
+### Windows
+
+Grab `invgen-*-x86_64-windows.zip` from
+[Releases](https://github.com/ldolberg/invgen/releases), unzip it and add the
+folder to your `PATH` (or run `invgen.exe` from there). SmartScreen may warn about
+an unsigned download; choose "More info" and "Run anyway". The config lives in
+`%APPDATA%\invgen\config.yaml`.
+
+### With Cargo (any platform)
+
+```sh
+cargo install invgen --locked
+```
+
+Needs Rust 1.95+ and a C compiler.
+
+### From source
+
+```sh
+make install      # Linux: binary to ~/.local/bin, desktop entry and icon to ~/.local/share
 make uninstall
 ```
 
 Or just the binary: `cargo install --path . --locked`.
 
+`invgen config` prints the config path on every platform. Paths below use the Linux
+`~/.config/invgen` for brevity.
+
 ## Quickstart
+
+Open the editor (`invgen`, or the app launcher). The first time, when there is no
+config yet, it asks for your details, bank account and first client, writes a
+commented `~/.config/invgen/config.yaml` and opens your first invoice, ready to
+export. Prefer YAML? Pick "Skip, I'll edit YAML" and the commented template opens
+in your text editor instead.
+
+From the terminal:
 
 ```sh
 invgen config --edit         # create ~/.config/invgen/config.yaml and fill in your data
@@ -65,6 +108,15 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen template --export [PATH] [--force]` | Write the built-in typst template (stdout without PATH) |
 
 Every command accepts `--config PATH` (or `INVGEN_CONFIG=PATH`) to use another config.
+
+In the editor, **Clients** (top bar) lists your clients and lets you add, edit,
+rename and delete them; the arrow next to **New** starts an invoice for a chosen
+client. These edits rewrite only the lines they change in `config.yaml`, so your
+comments, key order and formatting stay as they are, and the previous version is
+kept as `config.yaml.bak`. If the file uses YAML the editor cannot change safely
+(for example a client written as a flow mapping `{ ... }`, or anchors), nothing is
+written and the editor offers to open the file instead. Edits made in a text editor
+are picked up when you save them.
 Parse errors are reported as `file:line: message`.
 
 ## Format
@@ -128,10 +180,12 @@ if `Cargo.lock` changed), commit, then push a matching tag:
 git tag v0.1.3 && git push origin v0.1.3
 ```
 
-The Release workflow tests the crate, builds the tarball and the Flatpak, publishes
-the signed Flatpak repo to GitHub Pages and creates the GitHub release. Running it
-by hand from the Actions tab is a dry run. Build, test and coding rules:
-[CONTRIBUTING.md](CONTRIBUTING.md).
+The Release workflow tests the crate, builds the Linux tarball, the macOS and
+Windows zips and the Flatpak (smoke testing each binary on its own OS), publishes
+the signed Flatpak repo to GitHub Pages, creates the GitHub release and publishes
+the crate to crates.io (secret `CARGO_REGISTRY_TOKEN`). Running it by hand from the
+Actions tab is a dry run.
+Build, test and coding rules: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
