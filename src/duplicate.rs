@@ -30,7 +30,8 @@ const MONTHS: [&str; 12] = [
 /// The markdown of a copy of `src` dated `today`, and its number.
 ///
 /// * `number`: the next free number, as `invgen new` assigns it;
-/// * `date`: `today`; `status`: `pending` (when written); `paid_on`: removed;
+/// * `date`: `today`; `status`: `pending` (when written); `paid_on`,
+///   `issued_hash` and `sent_on`: removed;
 /// * `due`: an explicit date is removed so it is computed again from
 ///   `due_days` (`due: false` and `due_days` are kept);
 /// * the body: month names with a year (`October 2026`) and `YYYY-MM`
@@ -49,6 +50,9 @@ pub fn duplicate(src: &str, cfg: &Config, today: NaiveDate) -> Result<(String, S
     let mut text = format!("{}{}", &src[..body_at], body);
 
     text = frontmatter::remove(&text, "paid_on")?;
+    // The copy is a new invoice: not issued, not sent yet.
+    text = frontmatter::remove(&text, crate::lock::KEY)?;
+    text = frontmatter::remove(&text, "sent_on")?;
     if frontmatter::get(&text, "status")?.is_some() {
         text = frontmatter::set(&text, "status", "pending", Place::End)?;
     }
@@ -333,6 +337,8 @@ status: paid           # pending | paid\n\
 paid_on: 2026-11-20\n\
 client: northwind\n\
 tax_rate: 21\n\
+sent_on: 2026-11-03\n\
+issued_hash: \"0123456789abcdef\"\n\
 ---\n\
 \n\
 # Senior Software Engineer\n\

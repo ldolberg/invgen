@@ -72,7 +72,8 @@ clients:
 | `template` | built-in | Path of a custom typst template. See [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md). |
 | `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`, `logo` (SVG or PNG shown top-left; a missing file is an error). |
 | `payment` | empty | `holder`, `iban`, `bic`, `notes` (list of lines). |
-| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `language`, `rate`, `unit`, `description`. |
+| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `language`, `rate`, `unit`, `description`. The client's `email` is the recipient of [`invgen send`](cli.md#invgen-send-filenumber---dry-run---mark-sent). |
+| `email` | per language | `subject` and `body` of the message `invgen send` prepares, with the placeholders `{number}`, `{total}`, `{due}`, `{client}`, `{from}`. |
 
 Unknown keys are ignored, so a typo in a key name does not raise an error. If a
 value does not show up on the invoice, check the spelling first.
