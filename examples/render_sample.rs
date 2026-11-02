@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use chrono::NaiveDate;
-use invgen::model::{Decimal, Invoice, LineItem, Party, Payment, Status};
+use invgen::model::{Decimal, Invoice, Kind, LineItem, Party, Payment, Status};
 use invgen::render::Renderer;
 
 fn base() -> Invoice {
@@ -77,6 +77,9 @@ fn base() -> Invoice {
         labels: Default::default(),
         template: None,
         format: Default::default(),
+        kind: Kind::Invoice,
+        refers_to: None,
+        refers_to_date: None,
     }
 }
 

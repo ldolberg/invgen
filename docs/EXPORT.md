@@ -25,13 +25,17 @@ contains every invoice that did parse.
 | `tax` | string | Tax amount. |
 | `total` | string | `subtotal + tax`. |
 | `file` | string | Path of the markdown file (under `invoices_dir`). |
+| `kind` | string | `invoice` or `credit_note` (see [Credit notes](FORMAT.md#credit-notes)). |
+| `refers_to` | string or null | For a credit note, the number of the invoice it reverses. Empty in CSV, `null` in JSON for invoices. |
 | `items` | array | JSON only, see below. |
 
 Amounts (`subtotal`, `tax`, `total` and item `total`) are exact decimal strings
 with exactly two decimals and a dot as decimal separator, no thousands
 separator and no currency: `9450.00`, `-120.50`. They are strings in JSON too,
 so no precision is lost to binary floating point. They are the same values the
-PDF shows (see [Totals and rounding](FORMAT.md#totals-and-rounding)).
+PDF shows (see [Totals and rounding](FORMAT.md#totals-and-rounding)). For a
+credit note they are negative (`-900.00`), so summing `total` over an export
+nets credit notes out; its item `quantity` and `rate` stay positive as written.
 
 ## CSV
 
@@ -40,9 +44,10 @@ quoted with double quotes when it contains a comma, a double quote or a line
 break; a double quote inside a field is doubled.
 
 ```text
-number,date,due,status,paid_on,client_key,client,currency,subtotal,tax,total,file
-EINV-2026-22,2026-10-01,2026-10-15,paid,2026-10-12,northwind,Northwind Labs SL,EUR,12450.90,0.00,12450.90,/home/alex/Documents/Invoices/EINV-2026-22.md
-EINV-2026-23,2026-11-02,2026-11-16,pending,,northwind,Northwind Labs SL,EUR,9450.00,0.00,9450.00,/home/alex/Documents/Invoices/EINV-2026-23.md
+number,date,due,status,paid_on,client_key,client,currency,subtotal,tax,total,file,kind,refers_to
+EINV-2026-22,2026-10-01,2026-10-15,paid,2026-10-12,northwind,Northwind Labs SL,EUR,12450.90,0.00,12450.90,/home/alex/Documents/Invoices/EINV-2026-22.md,invoice,
+EINV-2026-23,2026-11-02,2026-11-16,pending,,northwind,Northwind Labs SL,EUR,9450.00,0.00,9450.00,/home/alex/Documents/Invoices/EINV-2026-23.md,invoice,
+CN-2026-01,2026-11-05,,pending,,northwind,Northwind Labs SL,EUR,-900.00,0.00,-900.00,/home/alex/Documents/Invoices/CN-2026-01.md,credit_note,EINV-2026-23
 ```
 
 ## JSON
@@ -75,6 +80,8 @@ match gives `[]`). Each object has the fields above in that order, plus
     "tax": "0.00",
     "total": "9450.00",
     "file": "/home/alex/Documents/Invoices/EINV-2026-23.md",
+    "kind": "invoice",
+    "refers_to": null,
     "items": [
       {
         "description": "Senior Software Engineer",

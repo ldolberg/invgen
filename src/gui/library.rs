@@ -42,7 +42,7 @@ pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
                 path: path.clone(),
                 number: inv.number.clone(),
                 client: inv.to.name.clone(),
-                total: format_money(&inv.currency, inv.total()),
+                total: format_money(&inv.currency, inv.signed_total()),
                 status: Some(inv.effective_status(today)),
                 days_overdue: inv.days_overdue(today),
                 date: Some(inv.date),

@@ -2,7 +2,7 @@
 
 use crate::config::{ClientConfig, Config};
 use crate::model::{
-    Decimal, FormatOptions, Invoice, LineItem, NumberFormat, Party, Payment, Status, num,
+    Decimal, FormatOptions, Invoice, Kind, LineItem, NumberFormat, Party, Payment, Status, num,
 };
 use chrono::{Datelike, Duration, Local, NaiveDate};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
@@ -36,6 +36,10 @@ type Result<T> = std::result::Result<T, ParseError>;
 const DEFAULT_ACCENT: &str = "#111827";
 
 /// Parse an invoice. `cfg` supplies defaults (sender, payment, clients, numbering).
+///
+/// For a credit note without `refers_to_date`, the date is looked up from
+/// the referenced invoice in `cfg.invoices_dir` (see
+/// [`crate::credit::invoice_date`]).
 pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
     let src = src.strip_prefix('\u{feff}').unwrap_or(src);
     let lines = LineIndex::new(src);
@@ -86,6 +90,19 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
     let date = fm
         .date("date")?
         .unwrap_or_else(|| Local::now().date_naive());
+    let kind = match fm.str("kind")? {
+        None => Kind::Invoice,
+        Some(k) if crate::credit::is_credit_note_kind(&k) => Kind::CreditNote,
+        Some(k) => match k.trim().to_ascii_lowercase().as_str() {
+            "" | "invoice" => Kind::Invoice,
+            _ => {
+                return Err(ParseError::new(
+                    fm.line_of("kind"),
+                    format!("unknown kind `{k}` (use invoice or credit_note)"),
+                ));
+            }
+        },
+    };
     let hide_due = match fm.get("due") {
         Some(Value::Bool(false)) => true,
         Some(Value::String(s)) => {
@@ -96,8 +113,12 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         }
         _ => false,
     };
+    // A credit note has no due date unless one is written explicitly.
+    let implicit_due = kind == Kind::CreditNote && fm.get("due_days").is_none();
     let due = if hide_due {
         None
+    } else if implicit_due {
+        fm.date("due")?
     } else {
         match fm.date("due")? {
             Some(d) => Some(d),
@@ -116,7 +137,48 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
     let number = fm
         .str("number")?
         .filter(|n| !n.trim().is_empty())
-        .unwrap_or_else(|| cfg.next_number(date.year()));
+        .unwrap_or_else(|| match kind {
+            Kind::Invoice => cfg.next_number(date.year()),
+            Kind::CreditNote => cfg.next_credit_number(date.year()),
+        });
+    let refers_to = fm
+        .str("refers_to")?
+        .map(|r| r.trim().to_string())
+        .filter(|r| !r.is_empty());
+    let written_refers_to_date = fm.date("refers_to_date")?;
+    let refers_to_date = match kind {
+        Kind::Invoice => {
+            for key in ["refers_to", "refers_to_date"] {
+                if fm.get(key).is_some_and(|v| !v.is_null()) {
+                    return Err(ParseError::new(
+                        fm.line_of(key),
+                        format!("`{key}` only applies to credit notes (add `kind: credit_note`)"),
+                    ));
+                }
+            }
+            None
+        }
+        Kind::CreditNote => {
+            let Some(target) = &refers_to else {
+                let line = fm.line_of(if fm.get("refers_to").is_some() {
+                    "refers_to"
+                } else {
+                    "kind"
+                });
+                return Err(ParseError::new(
+                    line,
+                    "a credit note needs `refers_to: <invoice number>`",
+                ));
+            };
+            if target == number.trim() {
+                return Err(ParseError::new(
+                    fm.line_of("refers_to"),
+                    "a credit note cannot refer to itself",
+                ));
+            }
+            written_refers_to_date.or_else(|| crate::credit::invoice_date(cfg, target))
+        }
+    };
     let status = match fm.str("status")? {
         None => Status::default(),
         Some(s) => s
@@ -217,6 +279,9 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         labels,
         template,
         format,
+        kind,
+        refers_to,
+        refers_to_date,
     };
     if invoice.checked_total().is_none() {
         return Err(ParseError::new(
@@ -1897,5 +1962,93 @@ please.
         assert_eq!(note(src, &cfg()).as_deref(), Some("outside_scope"));
         let err = parse("---\ntax_note: [a, b]\n---\n- A: 1 @ 1\n").unwrap_err();
         assert_eq!(err.line, 2);
+    }
+
+    #[test]
+    fn kind_defaults_to_invoice() {
+        let inv = parse("- A: 1 @ 1\n").unwrap();
+        assert_eq!(inv.kind, Kind::Invoice);
+        assert_eq!(inv.refers_to, None);
+        assert_eq!(inv.sign(), Decimal::ONE);
+        let inv = parse("---\nkind: Invoice\n---\n- A: 1 @ 1\n").unwrap();
+        assert_eq!(inv.kind, Kind::Invoice);
+    }
+
+    #[test]
+    fn credit_note_front_matter() {
+        let src = "---\nkind: credit_note\ndate: 2026-11-02\nrefers_to: EINV-2026-20\nrefers_to_date: 2026-10-01\ntax_rate: 10\n---\n- A: 2 @ 50\n";
+        let inv = parse(src).unwrap();
+        assert_eq!(inv.kind, Kind::CreditNote);
+        assert_eq!(inv.refers_to.as_deref(), Some("EINV-2026-20"));
+        assert_eq!(inv.refers_to_date, Some(date(2026, 10, 1)));
+        // Own sequence, and no due date unless written.
+        assert_eq!(inv.number, "CN-2026-01");
+        assert_eq!(inv.due, None);
+        // Amounts as written; the sign makes them count negatively.
+        assert_eq!(inv.total(), d("110"));
+        assert_eq!(inv.signed_total(), d("-110"));
+        // Spelling variants.
+        for k in ["credit-note", "Credit Note", "credit"] {
+            let inv = parse(&src.replace("credit_note", k)).unwrap();
+            assert_eq!(inv.kind, Kind::CreditNote, "{k}");
+        }
+        // Explicit due dates still work.
+        let inv = parse(&src.replace("tax_rate: 10", "due: 2026-12-01")).unwrap();
+        assert_eq!(inv.due, Some(date(2026, 12, 1)));
+        let inv = parse(&src.replace("tax_rate: 10", "due_days: 10")).unwrap();
+        assert_eq!(inv.due, Some(date(2026, 11, 12)));
+        // No date and no library: the referenced date stays unknown.
+        let inv = parse(&src.replace("refers_to_date: 2026-10-01\n", "")).unwrap();
+        assert_eq!(inv.refers_to_date, None);
+    }
+
+    #[test]
+    fn credit_note_errors() {
+        let err = parse("---\nkind: credit_note\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("refers_to"), "{}", err.message);
+        let err =
+            parse("---\nkind: credit_note\nrefers_to: \"  \"\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3);
+        let err = parse("---\nkind: refund\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(
+            err.message.contains("unknown kind `refund`"),
+            "{}",
+            err.message
+        );
+        let err =
+            parse("---\ndate: 2026-01-01\nrefers_to: EINV-2026-20\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(
+            err.message.contains("only applies to credit notes"),
+            "{}",
+            err.message
+        );
+        let err = parse("---\nkind: credit_note\nnumber: CN-1\nrefers_to: CN-1\n---\n- A: 1 @ 1\n")
+            .unwrap_err();
+        assert!(err.message.contains("itself"), "{}", err.message);
+        let err =
+            parse("---\nkind: credit_note\nrefers_to: X\nrefers_to_date: soon\n---\n- A: 1 @ 1\n")
+                .unwrap_err();
+        assert_eq!(err.line, 4);
+    }
+
+    #[test]
+    fn credit_note_date_is_looked_up_from_the_library() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = cfg();
+        cfg.invoices_dir = dir.path().to_path_buf();
+        std::fs::write(
+            dir.path().join("EINV-2026-20.md"),
+            "---\nnumber: EINV-2026-20\ndate: 2026-10-01\n---\n- A: 1 @ 1\n",
+        )
+        .unwrap();
+        let cn = "---\nkind: credit_note\nrefers_to: EINV-2026-20\n---\n- A: 1 @ 1\n";
+        let inv = parse_invoice(cn, &cfg).unwrap();
+        assert_eq!(inv.refers_to_date, Some(date(2026, 10, 1)));
+        // A missing invoice is not an error (the check is `refers_to_date`).
+        let inv = parse_invoice(&cn.replace("-20", "-21"), &cfg).unwrap();
+        assert_eq!(inv.refers_to_date, None);
     }
 }

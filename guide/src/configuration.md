@@ -24,6 +24,7 @@ bank or clients. An empty file behaves the same way.
 ```yaml
 invoices_dir: ~/Documents/Invoices   # where invoices live; `~` is expanded
 number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
+credit_prefix: CN                    # credit notes look like CN-<year>-<seq>
 currency: EUR                        # default currency code
 tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
@@ -71,6 +72,7 @@ clients:
 |---|---|---|
 | `invoices_dir` | `~/Documents/Invoices` | Where `invgen new` and the editor create invoices, where `invgen list` and the editor sidebar look, and the folder scanned for the next number. |
 | `number_prefix` | `EINV` | Prefix of generated numbers. The starter file written by `invgen config` sets `INV`. |
+| `credit_prefix` | `CN` | Prefix of credit note numbers. Credit notes have their own sequence. |
 | `currency` | `EUR` | Currency code printed next to amounts. Any text works; invgen does not convert between currencies. |
 | `tax_rate` | `0` | Percent applied to the subtotal. Single lines can use another rate (a `Tax` column or `, tax 10%`), see [FORMAT.md](https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#body-rules). |
 | `tax_note` | none | Legal tax mention printed under the totals: `reverse_charge`, `exempt`, `outside_scope` (translated into the invoice language) or any free text. See [Tax notes](#tax-notes). |
@@ -172,6 +174,10 @@ sequence is global: it keeps counting across years (`EINV-2025-13` is followed b
 levels of subfolders for `.md` and `.pdf` files named `<prefix>-YYYY-N...`, takes
 the highest `N` and adds one. Per-year folders such as `Invoices/2025/` are
 therefore fine.
+
+Credit notes use the same scheme with `credit_prefix` (`CN-2026-01`). Each prefix
+keeps its own sequence, so credit notes and invoices never use up each other's
+numbers.
 
 ## Changes take effect
 

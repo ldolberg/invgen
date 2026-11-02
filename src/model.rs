@@ -111,6 +111,29 @@ impl Status {
     }
 }
 
+/// What a document is. A credit note reverses (part of) an earlier invoice.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Kind {
+    #[default]
+    Invoice,
+    CreditNote,
+}
+
+impl Kind {
+    pub fn is_invoice(&self) -> bool {
+        *self == Kind::Invoice
+    }
+
+    /// The front matter spelling: `invoice` or `credit_note`.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Kind::Invoice => "invoice",
+            Kind::CreditNote => "credit_note",
+        }
+    }
+}
+
 /// A fully resolved invoice, ready to render.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Invoice {
@@ -154,6 +177,17 @@ pub struct Invoice {
     /// `number_format`, `date_format`). Empty follows `language`.
     #[serde(flatten)]
     pub format: FormatOptions,
+    /// Invoice or credit note. Not serialized for plain invoices, so the
+    /// issued-invoice hash (`crate::lock`) of existing invoices is unchanged.
+    #[serde(default, skip_serializing_if = "Kind::is_invoice")]
+    pub kind: Kind,
+    /// Number of the invoice a credit note reverses (always set for credit
+    /// notes, never for invoices).
+    #[serde(default)]
+    pub refers_to: Option<String>,
+    /// Date of that invoice, when known.
+    #[serde(default)]
+    pub refers_to_date: Option<NaiveDate>,
 }
 
 /// Formatting overrides for amounts and dates on the PDF, set in the config,
@@ -293,6 +327,23 @@ impl Invoice {
     /// `subtotal + tax`. Both are whole cents, so nothing is rounded here.
     pub fn total(&self) -> Decimal {
         self.subtotal().saturating_add(self.tax())
+    }
+
+    /// `-1` for a credit note, `1` otherwise. Credit note items are written
+    /// with positive quantities and rates, so `subtotal`, `tax` and `total`
+    /// are the credited amounts as written; multiply by `sign` (or use
+    /// [`Invoice::signed_total`]) for reporting and display.
+    pub fn sign(&self) -> Decimal {
+        match self.kind {
+            Kind::Invoice => Decimal::ONE,
+            Kind::CreditNote => Decimal::NEGATIVE_ONE,
+        }
+    }
+
+    /// `total` with the sign of the document: negative for a credit note, so
+    /// summing `signed_total` over a library nets credit notes out.
+    pub fn signed_total(&self) -> Decimal {
+        self.total().saturating_mul(self.sign())
     }
 
     /// The total, or `None` when any step overflows `Decimal` (about 7.9e28).
@@ -563,6 +614,9 @@ mod tests {
             labels: BTreeMap::new(),
             template: None,
             format: FormatOptions::default(),
+            kind: Kind::Invoice,
+            refers_to: None,
+            refers_to_date: None,
         }
     }
 
@@ -732,6 +786,22 @@ mod tests {
     }
 
     #[test]
+    fn credit_notes_count_negatively() {
+        let mut inv = invoice(vec![item(d("2"), d("50"))], d("21"));
+        assert_eq!(inv.signed_total(), d("121"));
+        // Plain invoices serialize without `kind`, so issued-invoice hashes
+        // (crate::lock) of existing invoices do not change.
+        let json = serde_json::to_value(&inv).unwrap();
+        assert!(json.get("kind").is_none(), "{json}");
+        inv.kind = Kind::CreditNote;
+        assert_eq!(inv.total(), d("121"));
+        assert_eq!(inv.signed_total(), d("-121"));
+        assert_eq!(Kind::CreditNote.label(), "credit_note");
+        let k: Kind = serde_yaml_ng::from_str("credit_note").unwrap();
+        assert_eq!(k, Kind::CreditNote);
+    }
+
+    #[test]
     fn file_stems() {
         assert_eq!(file_stem("EINV-2026-01"), "EINV-2026-01");
         assert_eq!(file_stem("A/B\\C"), "A_B_C");
@@ -835,6 +905,9 @@ mod tests {
             labels: BTreeMap::new(),
             template: None,
             format: FormatOptions::default(),
+            kind: Kind::Invoice,
+            refers_to: None,
+            refers_to_date: None,
         }
     }
 

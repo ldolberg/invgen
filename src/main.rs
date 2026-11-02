@@ -5,7 +5,7 @@ use chrono::{Datelike, Local, NaiveDate};
 use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand};
 use invgen::config::{Config, DEFAULT_CONFIG};
-use invgen::model::{Decimal, Invoice, Status, format_amount, format_money};
+use invgen::model::{Decimal, Invoice, Kind, Status, format_amount, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
 use invgen::report::{self, Aging, Filter, Library, Severity};
@@ -65,6 +65,10 @@ enum Cmd {
         /// of starting from the template.
         #[arg(long, value_name = "NUMBER|last")]
         from: Option<String>,
+        /// Create a credit note reversing this invoice instead, prefilled
+        /// with its items (numbered with `credit_prefix`).
+        #[arg(long, value_name = "NUMBER", conflicts_with_all = ["client", "from"])]
+        credit: Option<String>,
         /// Open the new invoice in the editor.
         #[arg(long)]
         open: bool,
@@ -202,11 +206,19 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 None => Ok(ExitCode::FAILURE),
             }
         }
-        Some(Cmd::New { client, from, open }) => {
+        Some(Cmd::New {
+            client,
+            from,
+            credit,
+            open,
+        }) => {
             let cfg = load_config(config_path.as_deref())?;
-            match from {
-                Some(from) => cmd_new_from(&cfg, &from, client.as_deref(), open, config_path),
-                None => cmd_new(&cfg, client.as_deref(), open, config_path),
+            match (from, credit) {
+                (_, Some(number)) => cmd_new_credit(&cfg, &number, open, config_path),
+                (Some(from), None) => {
+                    cmd_new_from(&cfg, &from, client.as_deref(), open, config_path)
+                }
+                (None, None) => cmd_new(&cfg, client.as_deref(), open, config_path),
             }
         }
         Some(Cmd::Watch { file, output }) => {
@@ -383,7 +395,7 @@ fn build(
         st.green_bold("built"),
         st.bold(&inv.number),
         inv.to.name,
-        st.bold(&format_money(&inv.currency, inv.total())),
+        st.bold(&format_money(&inv.currency, inv.signed_total())),
         st.dim(&out.display().to_string())
     );
     if locked {
@@ -565,6 +577,22 @@ fn cmd_new_from(
     Ok(ExitCode::SUCCESS)
 }
 
+/// `invgen new --credit <NUMBER|FILE>`: see [`invgen::credit`].
+fn cmd_new_credit(
+    cfg: &Config,
+    invoice: &str,
+    open: bool,
+    config_path: Option<PathBuf>,
+) -> Result<ExitCode> {
+    let today = Local::now().date_naive();
+    let path = invgen::credit::write_credit_note(cfg, invoice, today)?;
+    println!("{}", path.display());
+    if open {
+        invgen::gui::run(Some(path), config_path)?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
 /// `invgen paid` / `invgen status`: rewrite only the front matter lines.
 fn cmd_set_status(
     cfg: &Config,
@@ -724,7 +752,7 @@ fn cmd_list(cfg: &Config, filter: &Filter, format: ListFormat) -> Result<ExitCod
         .clamp(6, 32);
     let totals: Vec<String> = rows
         .iter()
-        .map(|r| format_money(&r.invoice.currency, r.invoice.total()))
+        .map(|r| format_money(&r.invoice.currency, r.invoice.signed_total()))
         .collect();
     let w_total = totals
         .iter()
@@ -761,13 +789,21 @@ fn cmd_list(cfg: &Config, filter: &Filter, format: ListFormat) -> Result<ExitCod
             Status::Draft => st.dim(&status),
             Status::Pending => st.yellow(&status),
         };
+        // Credit notes are marked after the status (their totals are negative).
+        let credit = match (inv.kind, &inv.refers_to) {
+            (Kind::CreditNote, Some(r)) => {
+                format!("  {}", st.dim(&format!("credit note for {r}")))
+            }
+            _ => String::new(),
+        };
         println!(
-            "{:<w_num$}  {}  {:<w_client$}  {:>w_total$}  {}",
+            "{:<w_num$}  {}  {:<w_client$}  {:>w_total$}  {}{}",
             inv.number,
             inv.date.format("%Y-%m-%d"),
             client,
             total,
-            status
+            status,
+            credit
         );
     }
     if let Some(y) = last_year {

@@ -13,7 +13,7 @@ use std::fmt;
 
 use qrcode::{EcLevel, QrCode};
 
-use crate::model::{Decimal, Invoice, round_cents};
+use crate::model::{Decimal, Invoice, Kind, round_cents};
 
 /// Maximum payload size allowed by EPC069-12, in bytes.
 const MAX_BYTES: usize = 331;
@@ -131,9 +131,10 @@ pub fn epc(inv: &Invoice) -> Result<Epc, Skip> {
     })
 }
 
-/// `None` when `payment.qr` is off; otherwise the payload or why it was skipped.
+/// `None` when `payment.qr` is off or for a credit note (nothing to pay);
+/// otherwise the payload or why it was skipped.
 pub fn check(inv: &Invoice) -> Option<Result<String, Skip>> {
-    if !inv.payment.qr {
+    if !inv.payment.qr || inv.kind == Kind::CreditNote {
         return None;
     }
     Some(epc(inv).and_then(|e| {
@@ -291,6 +292,9 @@ mod tests {
             language: "en".into(),
             labels: Default::default(),
             template: None,
+            kind: crate::model::Kind::Invoice,
+            refers_to: None,
+            refers_to_date: None,
         }
     }
 
@@ -416,6 +420,14 @@ mod tests {
         assert_eq!(check(&inv), Some(Err(Skip::NotPositive)));
         inv.items[0].rate = dec("-5");
         assert_eq!(check(&inv), Some(Err(Skip::NotPositive)));
+
+        // A credit note never gets a payment QR code, and no warning either.
+        let mut inv = invoice();
+        assert!(matches!(check(&inv), Some(Ok(_))));
+        inv.kind = Kind::CreditNote;
+        inv.refers_to = Some("EINV-2026-20".into());
+        assert_eq!(check(&inv), None);
+        assert_eq!(warning(&inv), None);
 
         let mut inv = invoice();
         inv.payment.holder = None;

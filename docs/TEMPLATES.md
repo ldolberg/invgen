@@ -96,6 +96,13 @@ bump. A template can guard against a future breaking change with:
 | `total` | string | Formatted total. |
 | `notes` | list of strings | Paragraphs shown under the items. |
 | `signature` | string or none | Signature text; none hides it. |
+| `kind` | string | `invoice` or `credit_note` (stable keys). Added without a version bump; a template that must also run on older invgen releases can read it with `d.at("kind", default: "invoice")`. |
+| `refers_to` | dict or none | For a credit note: `number` (string) and `date` (formatted string, or none when unknown) of the invoice it reverses. None for invoices. |
+
+For a credit note the amounts `subtotal`, `tax`, `total` and each item's
+`total` are negative (e.g. `EUR -900.00`), while `qty` and `rate` stay as
+written (positive). Use `labels.credit_note` as the title and
+`labels.total_credited` instead of `labels.total_due`.
 
 A **party** has `name` (string), `address` (list of lines), `tax` (list of
 lines), `email` and `phone` (string or none). Empty lines are removed.
@@ -163,6 +170,10 @@ through too, so a custom template can define its own translatable strings.
 | `tax_note_reverse_charge` | Reverse charge: VAT to be accounted for by the recipient (Article 196 of Council Directive 2006/112/EC). |
 | `tax_note_exempt` | Exempt from VAT. |
 | `tax_note_outside_scope` | Outside the scope of VAT. |
+| `credit_note` | Credit note |
+| `refers_to` | Refers to invoice {number} of {date} (the template replaces `{number}` and `{date}`) |
+| `refers_to_undated` | Refers to invoice {number} (used when the invoice date is unknown) |
+| `total_credited` | Total credited |
 
 ### Example
 

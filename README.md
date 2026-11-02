@@ -102,11 +102,12 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen` / `invgen edit [FILE]` | Open the editor |
 | `invgen new [--client KEY] [--open]` | Create the next numbered invoice |
 | `invgen new --from NUMBER\|last [--client KEY]` | Duplicate an invoice (items, notes, overrides) as the next one, with today's date and the period moved forward |
+| `invgen new --credit NUMBER [--open]` | Create a credit note reversing invoice NUMBER, prefilled with its items ([credit notes](docs/FORMAT.md#credit-notes)) |
 | `invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]` | Render a PDF (and optional PNG previews). The first export of a non-draft invoice locks it (`issued_hash`); later builds warn when the issued content changed, `--strict` refuses |
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
-| `invgen list [--year YYYY] [--client KEY\|NAME] [--status S]... [--unpaid]` | Table of the invoices (including subfolders) with yearly totals and the outstanding balance by age (not due yet, 1-30, 31-60, 61+ days late); pending invoices past due show as `overdue Nd`. Filters combine and totals respect them |
+| `invgen list [--year YYYY] [--client KEY\|NAME] [--status S]... [--unpaid]` | Table of the invoices (including subfolders) with yearly totals and the outstanding balance by age (not due yet, 1-30, 31-60, 61+ days late); pending invoices past due show as `overdue Nd`; credit notes show negative totals, are marked `credit note for NUMBER` and net out. Filters combine and totals respect them |
 | `invgen list --format csv\|json` | Export the (filtered) invoices for accounting tools and scripts, see [docs/EXPORT.md](docs/EXPORT.md) |
-| `invgen check [--strict]` | Check the library: duplicate numbers, gaps, dates out of order, files that fail to parse, missing client or sender tax data, issued invoices that changed. Exit 1 on errors (or warnings with `--strict`) |
+| `invgen check [--strict]` | Check the library: duplicate numbers, gaps, dates out of order, files that fail to parse, missing client or sender tax data, issued invoices that changed, credit notes whose `refers_to` is not an invoice in the library. Exit 1 on errors (or warnings with `--strict`) |
 | `invgen paid FILE\|NUMBER [--on DATE]` | Mark an invoice paid (`status: paid`, `paid_on`), editing only those lines |
 | `invgen status FILE\|NUMBER STATUS` | Set the status: `pending`, `paid`, `overdue` or `draft` |
 | `invgen send FILE\|NUMBER [--dry-run] [--mark-sent]` | Build the PDF if needed and open your mail client with the client's email, a subject and body from config templates, and the PDF attached (`xdg-email` on Linux; macOS Mail; Windows `mailto:` plus the PDF path). No SMTP, no stored credentials |

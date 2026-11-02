@@ -12,7 +12,7 @@ use serde::Serialize;
 use super::i18n;
 use super::locale::Formatter;
 
-use crate::model::{Decimal, Invoice, Party, Status, round_cents, tax_note_preset};
+use crate::model::{Decimal, Invoice, Kind, Party, Status, round_cents, tax_note_preset};
 
 /// Version of the template data contract (docs/TEMPLATES.md).
 pub const CONTRACT_VERSION: u32 = 1;
@@ -48,6 +48,17 @@ pub(super) struct View {
     total: String,
     notes: Vec<String>,
     signature: Option<String>,
+    /// "invoice" or "credit_note".
+    kind: &'static str,
+    /// The invoice a credit note reverses; null for invoices.
+    refers_to: Option<RefersToView>,
+}
+
+#[derive(Serialize)]
+struct RefersToView {
+    number: String,
+    /// Formatted date of that invoice, or null when unknown.
+    date: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -165,6 +176,16 @@ impl View {
             Some(p) => labels[&format!("tax_note_{p}")].clone(),
             None => n,
         });
+        // Credit notes are written with positive amounts and shown negated.
+        let sign = inv.sign();
+        let signed = |x: Decimal| fmt.money(cur, x.saturating_mul(sign));
+        let refers_to = match inv.kind {
+            Kind::CreditNote => inv.refers_to.as_ref().map(|n| RefersToView {
+                number: n.trim().to_string(),
+                date: inv.refers_to_date.map(|d| fmt.date(d)),
+            }),
+            Kind::Invoice => None,
+        };
         let status = match inv.status {
             Status::Pending => "pending",
             Status::Paid => "paid",
@@ -202,26 +223,28 @@ impl View {
                     qty: fmt.qty(it.quantity),
                     unit: it.unit.trim().to_string(),
                     rate: fmt.amount(it.rate),
-                    total: fmt.money(cur, it.total()),
+                    total: signed(it.total()),
                     tax_rate: fmt.percent(inv.item_tax_rate(it)),
                 })
                 .collect(),
-            subtotal: fmt.money(cur, inv.subtotal()),
+            subtotal: signed(inv.subtotal()),
             tax_label,
             tax_rate: fmt.percent(tax_rate),
-            tax: fmt.money(cur, inv.tax()),
+            tax: signed(inv.tax()),
             tax_breakdown: breakdown
                 .iter()
                 .map(|g| TaxGroupView {
                     rate: fmt.percent(g.rate),
-                    base: fmt.money(cur, g.base),
-                    tax: fmt.money(cur, g.tax),
+                    base: signed(g.base),
+                    tax: signed(g.tax),
                 })
                 .collect(),
             tax_note,
-            total: fmt.money(cur, inv.total()),
+            total: signed(inv.total()),
             notes: clean(&inv.notes),
             signature: opt(&inv.signature),
+            kind: inv.kind.label(),
+            refers_to,
         }
     }
 }

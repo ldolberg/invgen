@@ -45,6 +45,10 @@ const EN: &[(&str, &str)] = &[
     ),
     ("tax_note_exempt", "Exempt from VAT."),
     ("tax_note_outside_scope", "Outside the scope of VAT."),
+    ("credit_note", "Credit note"),
+    ("refers_to", "Refers to invoice {number} of {date}"),
+    ("refers_to_undated", "Refers to invoice {number}"),
+    ("total_credited", "Total credited"),
 ];
 
 const ES: &[(&str, &str)] = &[
@@ -81,6 +85,10 @@ const ES: &[(&str, &str)] = &[
     ),
     ("tax_note_exempt", "Operación exenta de IVA."),
     ("tax_note_outside_scope", "Operación no sujeta a IVA."),
+    ("credit_note", "Nota de crédito"),
+    ("refers_to", "Rectifica la factura {number} del {date}"),
+    ("refers_to_undated", "Rectifica la factura {number}"),
+    ("total_credited", "Total abonado"),
 ];
 
 const DE: &[(&str, &str)] = &[
@@ -117,6 +125,10 @@ const DE: &[(&str, &str)] = &[
     ),
     ("tax_note_exempt", "Steuerfreie Leistung."),
     ("tax_note_outside_scope", "Nicht steuerbare Leistung."),
+    ("credit_note", "Gutschrift"),
+    ("refers_to", "Bezieht sich auf Rechnung {number} vom {date}"),
+    ("refers_to_undated", "Bezieht sich auf Rechnung {number}"),
+    ("total_credited", "Gutschriftsbetrag"),
 ];
 
 const FR: &[(&str, &str)] = &[
@@ -156,6 +168,10 @@ const FR: &[(&str, &str)] = &[
         "tax_note_outside_scope",
         "Opération hors du champ d'application de la TVA.",
     ),
+    ("credit_note", "Avoir"),
+    ("refers_to", "Se rapporte à la facture {number} du {date}"),
+    ("refers_to_undated", "Se rapporte à la facture {number}"),
+    ("total_credited", "Total de l'avoir"),
 ];
 
 const IT: &[(&str, &str)] = &[
@@ -192,6 +208,10 @@ const IT: &[(&str, &str)] = &[
     ),
     ("tax_note_exempt", "Operazione esente IVA."),
     ("tax_note_outside_scope", "Operazione fuori campo IVA."),
+    ("credit_note", "Nota di credito"),
+    ("refers_to", "Riferita alla fattura {number} del {date}"),
+    ("refers_to_undated", "Riferita alla fattura {number}"),
+    ("total_credited", "Totale accreditato"),
 ];
 
 const PT: &[(&str, &str)] = &[
@@ -228,6 +248,10 @@ const PT: &[(&str, &str)] = &[
     ),
     ("tax_note_exempt", "Isento de IVA."),
     ("tax_note_outside_scope", "Operação não sujeita a IVA."),
+    ("credit_note", "Nota de crédito"),
+    ("refers_to", "Refere-se à fatura {number} de {date}"),
+    ("refers_to_undated", "Refere-se à fatura {number}"),
+    ("total_credited", "Total creditado"),
 ];
 
 const NL: &[(&str, &str)] = &[
@@ -264,6 +288,10 @@ const NL: &[(&str, &str)] = &[
     ),
     ("tax_note_exempt", "Vrijgesteld van btw."),
     ("tax_note_outside_scope", "Buiten de reikwijdte van de btw."),
+    ("credit_note", "Creditnota"),
+    ("refers_to", "Betreft factuur {number} van {date}"),
+    ("refers_to_undated", "Betreft factuur {number}"),
+    ("total_credited", "Totaal gecrediteerd"),
 ];
 
 fn table(lang: &str) -> &'static [(&'static str, &'static str)] {

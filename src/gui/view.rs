@@ -316,7 +316,7 @@ fn header_info(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
     let Some(inv) = app.invoice.clone() else {
         return;
     };
-    let total = format_money(&inv.currency, inv.total());
+    let total = format_money(&inv.currency, inv.signed_total());
     let client = if inv.to.name.is_empty() {
         "No client".to_string()
     } else {

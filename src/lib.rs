@@ -2,6 +2,7 @@
 
 pub mod config;
 pub mod config_edit;
+pub mod credit;
 pub mod duplicate;
 pub mod frontmatter;
 pub mod gui;

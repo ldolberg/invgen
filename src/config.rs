@@ -14,6 +14,7 @@ pub const DEFAULT_CONFIG: &str = r#"# invgen configuration. See docs/FORMAT.md f
 
 invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports .pdf
 number_prefix: INV                   # numbers look like INV-<year>-<seq>
+# credit_prefix: CN                  # credit notes: CN-<year>-<seq>, own sequence
 currency: EUR
 tax_rate: 0                          # percent
 # tax_note: reverse_charge           # legal mention under the totals: reverse_charge,
@@ -109,6 +110,9 @@ impl EmailConfig {
 pub struct Config {
     pub invoices_dir: PathBuf,
     pub number_prefix: String,
+    /// Prefix of credit note numbers (`CN-<year>-<seq>`). Credit notes have
+    /// their own sequence, separate from invoices.
+    pub credit_prefix: String,
     pub currency: String,
     #[serde(with = "num")]
     pub tax_rate: Decimal,
@@ -146,6 +150,7 @@ impl Default for Config {
         Config {
             invoices_dir: expand_tilde(Path::new("~/Documents/Invoices")),
             number_prefix: "EINV".into(),
+            credit_prefix: "CN".into(),
             currency: "EUR".into(),
             tax_rate: Decimal::ZERO,
             due_days: 14,
@@ -267,18 +272,25 @@ impl Config {
     /// Next invoice number by scanning invoices_dir for `<prefix>-<year>-<seq>.(md|pdf)`
     /// (also accepts unpadded seq like EINV-2025-1). Seq is global across years.
     pub fn next_number(&self, year: i32) -> String {
+        self.next_number_for(&self.number_prefix, year)
+    }
+
+    /// Next credit note number: like [`Config::next_number`], but in the
+    /// separate `credit_prefix` sequence.
+    pub fn next_credit_number(&self, year: i32) -> String {
+        self.next_number_for(&self.credit_prefix, year)
+    }
+
+    /// Next number in the sequence of `prefix`. Each prefix keeps its own
+    /// sequence: files of other prefixes never advance it.
+    pub fn next_number_for(&self, prefix: &str, year: i32) -> String {
         let max = crate::library::discover_with_extensions(&self.invoices_dir, &["md", "pdf"])
             .iter()
             .filter_map(|p| p.file_stem()?.to_str())
-            .filter_map(|s| sequence_of(s, &self.number_prefix))
+            .filter_map(|s| sequence_of(s, prefix))
             .max()
             .unwrap_or(0);
-        format!(
-            "{}-{}-{:02}",
-            self.number_prefix,
-            year,
-            max.saturating_add(1)
-        )
+        format!("{}-{}-{:02}", prefix, year, max.saturating_add(1))
     }
 
     /// Markdown skeleton for a new invoice for `client` (or the first client), dated today,
@@ -491,6 +503,27 @@ mod tests {
         assert_eq!(cfg_in(dir.path()).next_number(2026), "EINV-2026-14");
         std::fs::write(dir.path().join("EINV-2026-120-acme.pdf"), "").unwrap();
         assert_eq!(cfg_in(dir.path()).next_number(2026), "EINV-2026-121");
+    }
+
+    #[test]
+    fn invoices_and_credit_notes_keep_separate_sequences() {
+        let dir = tempfile::tempdir().unwrap();
+        for n in ["EINV-2026-20.md", "EINV-2026-21.pdf", "CN-2026-03.md"] {
+            std::fs::write(dir.path().join(n), "").unwrap();
+        }
+        let cfg = cfg_in(dir.path());
+        assert_eq!(cfg.next_number(2026), "EINV-2026-22");
+        assert_eq!(cfg.next_credit_number(2026), "CN-2026-04");
+        // A prefix that starts like another one does not share its sequence.
+        let cfg = Config {
+            credit_prefix: "EINV-CN".into(),
+            ..cfg
+        };
+        assert_eq!(cfg.next_credit_number(2026), "EINV-CN-2026-01");
+        std::fs::write(dir.path().join("EINV-CN-2026-07.md"), "").unwrap();
+        assert_eq!(cfg.next_credit_number(2026), "EINV-CN-2026-08");
+        assert_eq!(cfg.next_number(2026), "EINV-2026-22");
+        assert_eq!(Config::default().credit_prefix, "CN");
     }
 
     #[test]

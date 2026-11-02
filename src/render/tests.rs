@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{Decimal, LineItem, Party, Payment, Status};
+use crate::model::{Decimal, Kind, LineItem, Party, Payment, Status};
 use chrono::NaiveDate;
 use std::time::Instant;
 
@@ -50,7 +50,84 @@ fn sample() -> Invoice {
         labels: Default::default(),
         template: None,
         format: Default::default(),
+        kind: Kind::Invoice,
+        refers_to: None,
+        refers_to_date: None,
     }
+}
+
+fn credit_note() -> Invoice {
+    Invoice {
+        number: "CN-2026-01".into(),
+        kind: Kind::CreditNote,
+        refers_to: Some("EINV-2026-20".into()),
+        refers_to_date: NaiveDate::from_ymd_opt(2026, 10, 1),
+        due: None,
+        ..sample()
+    }
+}
+
+#[test]
+fn credit_note_is_titled_and_negated() {
+    let r = Renderer::new().unwrap();
+    let text = doc_text(&r.compile(&credit_note()).unwrap());
+    assert!(text.contains("CREDIT NOTE"), "{text}");
+    assert!(
+        text.contains("Refers to invoice EINV-2026-20 of October 1, 2026"),
+        "{text}"
+    );
+    assert!(text.contains("Total credited"), "{text}");
+    assert!(text.contains("EUR -9,450.00"), "{text}");
+    assert!(
+        !text.contains("Total due") && !text.contains("INVOICE"),
+        "{text}"
+    );
+    // Rates stay as written.
+    assert!(text.contains("450.00"), "{text}");
+
+    // Without a known date, and in another language.
+    let mut inv = credit_note();
+    inv.refers_to_date = None;
+    inv.language = "de".into();
+    let text = doc_text(&r.compile(&inv).unwrap());
+    assert!(text.contains("GUTSCHRIFT"), "{text}");
+    assert!(
+        text.contains("Bezieht sich auf Rechnung EINV-2026-20"),
+        "{text}"
+    );
+    assert!(!text.contains(" vom "), "{text}");
+
+    // Every language has its credit note labels.
+    for lang in i18n::SUPPORTED {
+        let mut inv = credit_note();
+        inv.language = lang.to_string();
+        let text = doc_text(&r.compile(&inv).unwrap());
+        // Text runs can split a label into words with extra spaces.
+        let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let labels = i18n::labels(lang, &Default::default());
+        assert!(
+            text.contains(&labels["credit_note"].to_uppercase()),
+            "{lang}: {text}"
+        );
+        assert!(text.contains(&labels["total_credited"]), "{lang}: {text}");
+    }
+}
+
+#[test]
+fn invoices_render_no_credit_note_text() {
+    let r = Renderer::new().unwrap();
+    let mut inv = sample();
+    // `refers_to` is ignored for a plain invoice.
+    inv.refers_to = Some("EINV-2026-01".into());
+    let text = doc_text(&r.compile(&inv).unwrap());
+    assert!(
+        !text.contains("Refers to") && !text.contains("CREDIT"),
+        "{text}"
+    );
+    assert!(
+        text.contains("EUR 9,450.00") && !text.contains("-9,450"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -316,6 +393,21 @@ fn view_carries_contract_version_language_and_labels() {
     assert_eq!(v["status_label"], "En attente");
     assert_eq!(v["tax_label"], "TVA");
     assert!(v["logo"].is_null());
+    assert_eq!(v["kind"], "invoice");
+    assert!(v["refers_to"].is_null());
+    assert_eq!(v["total"], "9\u{202f}450,00\u{a0}€");
+
+    let v = serde_json::to_value(data::View::new(&credit_note(), None, None)).unwrap();
+    assert_eq!(v["kind"], "credit_note");
+    assert_eq!(v["refers_to"]["number"], "EINV-2026-20");
+    assert_eq!(v["refers_to"]["date"], "October 1, 2026");
+    assert_eq!(v["labels"]["credit_note"], "Credit note");
+    assert_eq!(v["items"][0]["rate"], "450.00");
+    assert_eq!(v["items"][0]["total"], "EUR -9,450.00");
+    assert_eq!(v["subtotal"], "EUR -9,450.00");
+    assert_eq!(v["tax"], "EUR 0.00");
+    assert_eq!(v["total"], "EUR -9,450.00");
+    assert_eq!(v["tax_breakdown"][0]["base"], "EUR -9,450.00");
 }
 
 fn write_png(path: &std::path::Path, w: u32, h: u32) {

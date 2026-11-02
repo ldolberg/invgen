@@ -6,6 +6,10 @@
 
 #let d = json("/invoice.json")
 #let t = d.labels
+// Credit notes (`d.kind == "credit_note"`) get their own title and total label.
+#let credit = d.at("kind", default: "invoice") == "credit_note"
+#let title = if credit { t.credit_note } else { t.invoice }
+#let total-label = if credit { t.total_credited } else { t.total_due }
 
 // Palette
 #let ink = rgb("#111827")
@@ -22,7 +26,7 @@
   draft: (fg: rgb("#4b5563"), bg: rgb("#f3f4f6"), dot: rgb("#9ca3af")),
 )
 
-#set document(title: t.invoice + " " + d.number, author: d.from.name)
+#set document(title: title + " " + d.number, author: d.from.name)
 #set page(
   paper: "a4",
   margin: (x: 20mm, top: 20mm, bottom: 22mm),
@@ -96,9 +100,15 @@
     stroke: 0.6pt + accent,
     radius: 99pt,
     inset: (x: 12pt, y: 5.5pt),
-    text(size: 7.5pt, weight: "semibold", tracking: 0.32em, fill: accent, upper(t.invoice)),
+    text(size: 7.5pt, weight: "semibold", tracking: 0.32em, fill: accent, upper(title)),
   ),
 )
+#if credit and d.refers_to != none {
+  v(8pt)
+  let r = d.refers_to
+  let s = if r.date != none { t.refers_to.replace("{date}", r.date) } else { t.refers_to_undated }
+  align(right, text(weight: "medium", fill: ink, s.replace("{number}", r.number)))
+}
 
 #v(30pt)
 
@@ -106,7 +116,7 @@
 #let sc = status-colors.at(d.status, default: status-colors.draft)
 #let meta-row(k, v) = (text(fill: muted, k), v)
 #let meta = (
-  meta-row(t.invoice, text(weight: "medium", fill: ink, "#" + d.number)),
+  meta-row(title, text(weight: "medium", fill: ink, "#" + d.number)),
   meta-row(t.status, pill(d.status_label, sc.fg, sc.bg, dot: sc.dot)),
   meta-row(t.invoice_date, text(fill: ink, d.date)),
 )
@@ -269,7 +279,7 @@
     grid(
       columns: (1fr, auto),
       align: (left + horizon, right + horizon),
-      text(weight: "semibold", fill: ink, t.total_due),
+      text(weight: "semibold", fill: ink, total-label),
       text(size: 12pt, weight: "semibold", fill: accent, d.total),
     ),
   )

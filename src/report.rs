@@ -5,7 +5,7 @@
 
 use crate::config::Config;
 use crate::library;
-use crate::model::{Decimal, Invoice, Status, round_cents};
+use crate::model::{Decimal, Invoice, Kind, Status, round_cents};
 use crate::parse::parse_invoice;
 use chrono::{Datelike, NaiveDate};
 use serde::Serialize;
@@ -33,6 +33,8 @@ pub struct Entry {
     pub from_line: Option<usize>,
     /// The recorded `issued_hash` (see [`crate::lock`]) and its 1-based line.
     pub issued_hash: Option<(String, usize)>,
+    /// 1-based line of the `refers_to:` key (credit notes).
+    pub refers_to_line: Option<usize>,
     pub invoice: Invoice,
 }
 
@@ -101,17 +103,36 @@ pub fn entry_from_source(
         issued_hash: fm
             .scalar(crate::lock::KEY)
             .zip(fm.line_of(crate::lock::KEY)),
+        refers_to_line: fm.line_of("refers_to"),
         invoice,
     })
 }
 
-/// Issue order: sequences are global and monotonic, so they give the order.
-pub fn sort_entries(entries: &mut [Entry]) {
-    entries.sort_by(|a, b| {
+/// Issue order: invoice sequences are global and monotonic, so they give
+/// the order. Credit notes have their own sequence, so each one is placed by
+/// date: after every invoice dated on or before it.
+pub fn sort_entries(entries: &mut Vec<Entry>) {
+    let (mut credits, mut invoices): (Vec<Entry>, Vec<Entry>) = std::mem::take(entries)
+        .into_iter()
+        .partition(|e| e.invoice.kind == Kind::CreditNote);
+    invoices.sort_by(|a, b| {
         let ka = (seq_of(&a.invoice.number), a.invoice.date, &a.invoice.number);
         let kb = (seq_of(&b.invoice.number), b.invoice.date, &b.invoice.number);
         ka.cmp(&kb)
     });
+    credits.sort_by(|a, b| {
+        let ka = (a.invoice.date, seq_of(&a.invoice.number), &a.invoice.number);
+        let kb = (b.invoice.date, seq_of(&b.invoice.number), &b.invoice.number);
+        ka.cmp(&kb)
+    });
+    let mut credits = credits.into_iter().peekable();
+    for inv in invoices {
+        while let Some(c) = credits.next_if(|c| c.invoice.date < inv.invoice.date) {
+            entries.push(c);
+        }
+        entries.push(inv);
+    }
+    entries.extend(credits);
 }
 
 /// Trailing sequence number of an invoice number, 0 when there is none.
@@ -255,7 +276,7 @@ pub fn year_totals(entries: &[&Entry]) -> BTreeMap<i32, BTreeMap<String, Decimal
             .or_default()
             .entry(e.invoice.currency.clone())
             .or_default();
-        *sum = sum.saturating_add(e.invoice.total());
+        *sum = sum.saturating_add(e.invoice.signed_total());
     }
     out
 }
@@ -290,18 +311,29 @@ impl Aging {
 }
 
 /// Outstanding balance (effective status `pending` or `overdue`) per
-/// currency, split into aging buckets.
+/// currency, split into aging buckets. An unpaid credit note counts
+/// negatively, in the bucket of the invoice it refers to when that invoice is
+/// among `entries`, else as not due yet.
 pub fn outstanding(entries: &[&Entry], today: NaiveDate) -> BTreeMap<String, Aging> {
+    let late = |inv: &Invoice| inv.due.map_or(0, |d| (today - d).num_days());
     let mut out: BTreeMap<String, Aging> = BTreeMap::new();
     for e in entries {
         let inv = &e.invoice;
         if !is_unpaid(inv.effective_status(today)) {
             continue;
         }
-        let days_late = inv.due.map_or(0, |d| (today - d).num_days());
+        let days_late = match (inv.kind, inv.refers_to.as_deref()) {
+            (Kind::CreditNote, Some(target)) => entries
+                .iter()
+                .map(|o| &o.invoice)
+                .find(|o| o.kind == Kind::Invoice && o.number == target)
+                .filter(|o| is_unpaid(o.effective_status(today)))
+                .map_or(0, late),
+            _ => late(inv),
+        };
         out.entry(inv.currency.clone())
             .or_default()
-            .add(days_late, inv.total());
+            .add(days_late, inv.signed_total());
     }
     out
 }
@@ -310,7 +342,7 @@ pub fn outstanding(entries: &[&Entry], today: NaiveDate) -> BTreeMap<String, Agi
 // Export
 
 /// CSV columns, in order. Documented in docs/EXPORT.md.
-pub const CSV_HEADER: [&str; 12] = [
+pub const CSV_HEADER: [&str; 14] = [
     "number",
     "date",
     "due",
@@ -323,6 +355,8 @@ pub const CSV_HEADER: [&str; 12] = [
     "tax",
     "total",
     "file",
+    "kind",
+    "refers_to",
 ];
 
 /// Money as a plain decimal string with exactly 2 decimals: `9450.00`.
@@ -331,6 +365,8 @@ pub fn money_str(x: Decimal) -> String {
 }
 
 /// One exported invoice. Field order is the CSV column order, plus `items`.
+/// Amounts of a credit note (`kind: credit_note`) are negative, so summing
+/// `total` nets credit notes out; `quantity` and `rate` stay as written.
 #[derive(Debug, Clone, Serialize)]
 pub struct ExportRow {
     pub number: String,
@@ -345,6 +381,10 @@ pub struct ExportRow {
     pub tax: String,
     pub total: String,
     pub file: String,
+    /// `invoice` or `credit_note`.
+    pub kind: &'static str,
+    /// Number of the invoice a credit note reverses.
+    pub refers_to: Option<String>,
     pub items: Vec<ExportItem>,
 }
 
@@ -364,6 +404,7 @@ pub struct ExportItem {
 impl ExportRow {
     pub fn new(e: &Entry, today: NaiveDate) -> ExportRow {
         let inv = &e.invoice;
+        let signed = |x: Decimal| money_str(x.saturating_mul(inv.sign()));
         ExportRow {
             number: inv.number.clone(),
             date: inv.date.to_string(),
@@ -373,10 +414,12 @@ impl ExportRow {
             client_key: e.client_key.clone(),
             client: inv.to.name.clone(),
             currency: inv.currency.clone(),
-            subtotal: money_str(inv.subtotal()),
-            tax: money_str(inv.tax()),
-            total: money_str(inv.total()),
+            subtotal: signed(inv.subtotal()),
+            tax: signed(inv.tax()),
+            total: signed(inv.total()),
             file: e.path.display().to_string(),
+            kind: inv.kind.label(),
+            refers_to: inv.refers_to.clone(),
             items: inv
                 .items
                 .iter()
@@ -386,13 +429,13 @@ impl ExportRow {
                     quantity: it.quantity.normalize().to_string(),
                     unit: it.unit.clone(),
                     rate: it.rate.normalize().to_string(),
-                    total: money_str(it.total()),
+                    total: signed(it.total()),
                 })
                 .collect(),
         }
     }
 
-    fn csv_fields(&self) -> [&str; 12] {
+    fn csv_fields(&self) -> [&str; 14] {
         [
             &self.number,
             &self.date,
@@ -406,6 +449,8 @@ impl ExportRow {
             &self.tax,
             &self.total,
             &self.file,
+            self.kind,
+            self.refers_to.as_deref().unwrap_or(""),
         ]
     }
 }
@@ -625,6 +670,33 @@ pub fn check(lib: &Library, pdf_stems: &[String]) -> Vec<Diagnostic> {
         }
     }
 
+    // A credit note must reverse an invoice that is in the library.
+    for e in &lib.entries {
+        let inv = &e.invoice;
+        let (Kind::CreditNote, Some(target)) = (inv.kind, inv.refers_to.as_deref()) else {
+            continue;
+        };
+        let kinds: Vec<Kind> = lib
+            .entries
+            .iter()
+            .filter(|o| o.invoice.number == target)
+            .map(|o| o.invoice.kind)
+            .collect();
+        let problem = if kinds.contains(&Kind::Invoice) {
+            continue;
+        } else if kinds.is_empty() {
+            "which is not in the library"
+        } else {
+            "which is a credit note, not an invoice"
+        };
+        out.push(Diagnostic::new(
+            &e.path,
+            e.refers_to_line,
+            Error,
+            format!("{} refers to {target}, {problem}", inv.number),
+        ));
+    }
+
     // Same number written twice (padding aside, see below).
     for (number, es) in &by_number {
         if es.len() > 1 {
@@ -775,6 +847,7 @@ mod tests {
             client_line: Some(5),
             from_line: None,
             issued_hash: None,
+            refers_to_line: None,
             invoice: Invoice {
                 number: number.into(),
                 date: d(date),
@@ -810,8 +883,83 @@ mod tests {
                 labels: Default::default(),
                 template: None,
                 format: Default::default(),
+                kind: Kind::Invoice,
+                refers_to: None,
+                refers_to_date: None,
             },
         }
+    }
+
+    fn credit(number: &str, date: &str, refers_to: &str, total: &str) -> Entry {
+        let mut e = entry(number, date, Status::Pending, total);
+        e.invoice.kind = Kind::CreditNote;
+        e.invoice.refers_to = Some(refers_to.into());
+        e.invoice.due = None;
+        e.refers_to_line = Some(4);
+        e
+    }
+
+    #[test]
+    fn credit_notes_net_out_and_sort_by_date() {
+        let today = d("2026-06-01");
+        let l = lib(vec![
+            credit("CN-2026-01", "2026-02-15", "INV-2026-1", "100"),
+            entry("INV-2026-1", "2026-01-10", Status::Paid, "1000"),
+            entry("INV-2026-2", "2026-03-01", Status::Pending, "500"),
+            credit("CN-2026-02", "2026-04-01", "INV-2026-2", "500"),
+        ]);
+        let all: Vec<&Entry> = l.entries.iter().collect();
+        assert_eq!(
+            numbers(&all),
+            ["INV-2026-1", "CN-2026-01", "INV-2026-2", "CN-2026-02"]
+        );
+        assert_eq!(year_totals(&all)[&2026]["EUR"], dec("900"));
+        // CN-2026-02 cancels the pending invoice it reverses; CN-2026-01 is
+        // still pending against a paid invoice, so 100 is owed to the client.
+        let o = outstanding(&all, today);
+        assert_eq!(o["EUR"].total(), dec("-100"));
+        assert_eq!(o["EUR"].not_due, dec("-100"));
+        assert_eq!(o["EUR"].days_61_plus, Decimal::ZERO);
+
+        let csv = to_csv(&all[1..2], today);
+        let row = csv.split("\r\n").nth(1).unwrap();
+        assert!(
+            row.ends_with(",-100.00,/inv/CN-2026-01.md,credit_note,INV-2026-1"),
+            "{row}"
+        );
+        let json: serde_json::Value = serde_json::from_str(&to_json(&all, today)).unwrap();
+        assert_eq!(json[0]["kind"], "invoice");
+        assert!(json[0]["refers_to"].is_null());
+        assert_eq!(json[1]["kind"], "credit_note");
+        assert_eq!(json[1]["refers_to"], "INV-2026-1");
+        assert_eq!(json[1]["total"], "-100.00");
+        assert_eq!(json[1]["items"][0]["total"], "-100.00");
+        assert_eq!(json[1]["items"][0]["rate"], "100");
+    }
+
+    #[test]
+    fn check_validates_credit_note_references() {
+        let l = lib(vec![
+            entry("INV-2026-1", "2026-01-10", Status::Paid, "1000"),
+            credit("CN-2026-01", "2026-02-15", "INV-2026-1", "100"),
+            credit("CN-2026-02", "2026-02-16", "INV-2026-9", "100"),
+            credit("CN-2026-03", "2026-02-17", "CN-2026-01", "100"),
+        ]);
+        let diags = check(&l, &[]);
+        let msgs = messages(&diags);
+        assert_eq!(msgs.len(), 2, "{msgs:?}");
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("/inv/CN-2026-02.md:4: error")
+                    && m.contains("refers to INV-2026-9, which is not in the library")),
+            "{msgs:?}"
+        );
+        assert!(
+            msgs.iter()
+                .any(|m| m.contains("/inv/CN-2026-03.md:4: error")
+                    && m.contains("refers to CN-2026-01, which is a credit note")),
+            "{msgs:?}"
+        );
     }
 
     fn lib(mut entries: Vec<Entry>) -> Library {
@@ -991,7 +1139,7 @@ mod tests {
         assert_eq!(lines[0], CSV_HEADER.join(","));
         assert_eq!(
             lines[1],
-            "INV-2026-2,2026-01-10,2026-01-24,overdue,,northwind,\"Northwind Labs, SL\",EUR,9258.75,1944.34,11203.09,/inv/INV-2026-2.md"
+            "INV-2026-2,2026-01-10,2026-01-24,overdue,,northwind,\"Northwind Labs, SL\",EUR,9258.75,1944.34,11203.09,/inv/INV-2026-2.md,invoice,"
         );
         assert_eq!(lines[2], "");
 
