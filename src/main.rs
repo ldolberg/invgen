@@ -311,6 +311,15 @@ fn build(
     let Some((src, inv)) = parse_file(cfg, file)? else {
         return Ok(None);
     };
+    if let Some(w) = inv.tax_note_warning() {
+        let st = Style::stderr();
+        eprintln!(
+            "{} {} {}",
+            st.bold(&format!("{}:", file.display())),
+            st.yellow("warning:"),
+            w
+        );
+    }
     let state = lock::state(&src, &inv);
     if let lock::State::Changed { recorded, current } = &state {
         warn_changed(file, &inv, recorded, current, opts.strict);

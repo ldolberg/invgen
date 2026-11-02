@@ -23,6 +23,32 @@ const HASH_LEN: usize = 16;
 /// after the invoice is sent without changing what was sent.
 const IGNORED: &[&str] = &["status", "paid_on", KEY, "sent_on"];
 
+/// Drop null, empty-string, empty-list and empty-map values recursively, so a
+/// field added to the model later (absent or empty on old invoices) does not
+/// change the hash of invoices issued before it existed.
+fn prune_empty(value: &mut serde_json::Value) {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            map.values_mut().for_each(prune_empty);
+            map.retain(|_, v| !is_empty(v));
+        }
+        Value::Array(items) => items.iter_mut().for_each(prune_empty),
+        _ => {}
+    }
+}
+
+fn is_empty(v: &serde_json::Value) -> bool {
+    use serde_json::Value;
+    match v {
+        Value::Null => true,
+        Value::String(s) => s.is_empty(),
+        Value::Array(a) => a.is_empty(),
+        Value::Object(m) => m.is_empty(),
+        _ => false,
+    }
+}
+
 /// Short SHA-256 of the canonical serialization of `inv`: the JSON of the
 /// model (fields in declaration order, maps sorted) without the ignored
 /// fields above.
@@ -33,6 +59,7 @@ pub fn hash(inv: &Invoice) -> String {
             map.remove(*key);
         }
     }
+    prune_empty(&mut value);
     let canonical = serde_json::to_string(&value).expect("a JSON value always serializes");
     let digest = Sha256::digest(canonical.as_bytes());
     let hex: String = digest.iter().map(|b| format!("{b:02x}")).collect();
@@ -162,6 +189,16 @@ mod tests {
 
     fn parse(src: &str, cfg: &Config) -> Invoice {
         parse_invoice(src, cfg).unwrap()
+    }
+
+    #[test]
+    fn empty_optional_fields_do_not_change_the_hash() {
+        let a = serde_json::json!({"number": "X", "tax_note": null, "labels": {}, "items": [{"detail": null, "unit": ""}]});
+        let b = serde_json::json!({"number": "X", "items": [{}]});
+        let (mut a, mut b) = (a, b);
+        prune_empty(&mut a);
+        prune_empty(&mut b);
+        assert_eq!(a, b);
     }
 
     #[test]

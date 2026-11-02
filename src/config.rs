@@ -16,6 +16,8 @@ invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports
 number_prefix: INV                   # numbers look like INV-<year>-<seq>
 currency: EUR
 tax_rate: 0                          # percent
+# tax_note: reverse_charge           # legal mention under the totals: reverse_charge,
+#                                    # exempt, outside_scope or free text
 due_days: 14
 # language: en                       # labels: en, es, de, fr, it, pt, nl
 # labels:                            # override single labels
@@ -52,6 +54,7 @@ clients:
     tax: ["Tax ID: X00000000"]
     # currency: EUR      # optional per-client defaults
     # tax_rate: 0
+    # tax_note: reverse_charge
     # language: es
     rate: 450            # default rate used by `invgen new`
     unit: days
@@ -72,6 +75,10 @@ pub struct ClientConfig {
     pub description: Option<String>,
     /// Label language for this client's invoices (overrides the config).
     pub language: Option<String>,
+    /// Tax mention for this client's invoices (overrides the config), e.g.
+    /// `reverse_charge`. See `Config::tax_note`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tax_note: Option<String>,
 }
 
 /// Message templates for `invgen send`. Placeholders: `{number}`,
@@ -114,6 +121,10 @@ pub struct Config {
     /// Subject and body for `invgen send` (defaults per invoice language).
     #[serde(skip_serializing_if = "EmailConfig::is_empty")]
     pub email: EmailConfig,
+    /// Default legal tax mention under the totals: a preset
+    /// (`reverse_charge`, `exempt`, `outside_scope`) or free text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tax_note: Option<String>,
     /// Directory of the loaded config file; relative `from.logo` and
     /// `template` paths resolve against it. Not part of the file.
     #[serde(skip)]
@@ -135,6 +146,7 @@ impl Default for Config {
             labels: BTreeMap::new(),
             template: None,
             email: EmailConfig::default(),
+            tax_note: None,
             dir: None,
         }
     }

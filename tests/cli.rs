@@ -278,6 +278,62 @@ fn build_writes_pdf_next_to_markdown() {
 }
 
 #[test]
+fn build_warns_about_zero_tax_without_tax_note() {
+    let env = Env::with_config();
+    let with_vat_id = |extra: &str| {
+        format!(
+            "---\nnumber: INV-2025-8\ndate: 2025-03-01\nclient: northwind\n{extra}to:\n  tax: [\"VAT ID: ESB12345678\"]\n---\n\n- Consulting: 2 days @ 450\n"
+        )
+    };
+
+    // 0% tax, client with a VAT ID, no tax_note: warning, but the build succeeds.
+    let md = env.invoice("a.md", &with_vat_id(""));
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("built"))
+        .stderr(predicate::str::contains("warning:"))
+        .stderr(predicate::str::contains("tax_note"))
+        .stderr(predicate::str::contains("a.md"));
+    assert!(is_pdf(&env.invoices().join("INV-2025-8.pdf")));
+
+    // A tax note, a non-zero rate, or a client without tax lines: no warning.
+    for (name, body) in [
+        ("b.md", with_vat_id("tax_note: reverse_charge\n")),
+        ("c.md", with_vat_id("tax_note: Not subject to VAT\n")),
+        ("d.md", with_vat_id("tax_rate: 21\n")),
+        ("e.md", INVOICE.to_string()),
+    ] {
+        let md = env.invoice(name, &body);
+        env.cmd()
+            .arg("build")
+            .arg(&md)
+            .assert()
+            .success()
+            .stderr(predicate::str::contains("warning").not());
+    }
+}
+
+#[test]
+fn build_mixed_tax_rates_totals() {
+    let env = Env::with_config();
+    let md = env.invoice(
+        "mixed.md",
+        "---\nnumber: INV-2025-9\ndate: 2025-03-01\nclient: northwind\ntax_rate: 21\n---\n\n\
+         - Consulting: 2 days @ 450\n- Training: 1 days @ 600, tax 10%\n- Books: 2 @ 20, vat 0%\n",
+    );
+    // 900 + 600 + 40 = 1540; 21% of 900 = 189, 10% of 600 = 60 -> 1789.
+    env.cmd()
+        .arg("build")
+        .arg(&md)
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("1,789.00"));
+}
+
+#[test]
 fn build_output_flag() {
     let env = Env::with_config();
     let md = env.invoice("march.md", INVOICE);

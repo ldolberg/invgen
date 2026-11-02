@@ -63,6 +63,7 @@ impl ClientForm {
             unit: setup::opt(&self.unit),
             description: setup::opt(&self.description),
             language: None,
+            tax_note: None,
         }
     }
 }

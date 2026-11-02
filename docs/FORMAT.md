@@ -15,6 +15,7 @@ client: northwind       # key into config `clients:`  ...or an inline `to:` bloc
 currency: EUR                 # optional: falls back to client currency, then config default
 tax_rate: 0                   # percent; optional, falls back to client, then config
 tax_label: VAT                # optional: defaults to the translated "VAT" label
+tax_note: reverse_charge      # optional: legal mention under the totals (presets or free text)
 accent: "#111827"             # optional
 language: en                  # optional: en, es, de, fr, it, pt, nl
 template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
@@ -35,11 +36,23 @@ Any other paragraph becomes a note under the table.
 * **Items table**: the first markdown table. Columns are matched by header name
   (case-insensitive, anything after `(` ignored, so `Rate (EUR)` works):
   `description`/`item`/`service`, `qty`/`quantity`, `unit`, `rate`/`price`/`unit price`,
-  optional `detail`. A `Days` or `Hours` header is a quantity column that also sets
+  optional `detail`, optional `tax`/`vat` (also `tax rate`, `vat %`...). A `Days` or `Hours` header is a quantity column that also sets
   the unit. Other columns (e.g. `Total`) are ignored; totals are always computed.
   Description, quantity and rate columns are required. Fully empty rows are skipped.
   `Qty` may be written `21 days` (the unit is taken from it if there is no unit column
   or the unit cell is empty). Later tables are ignored.
+* **Per-line tax rate**: a `Tax` (or `VAT`) column gives each row its own rate in
+  percent (`21`, `21%`, `10 %`, `0%`); an empty cell uses the invoice `tax_rate`.
+  In a list item, add `, tax 10%` (or `, vat 10%`, `; tax: 10%`) at the end of the
+  first line: `- Training: 2 days @ 600, tax 10%`. Rates must not be negative.
+
+  ```markdown
+  | Description | Qty | Rate | Tax |
+  |-------------|-----|------|-----|
+  | Consulting  | 21  | 450  |     |
+  | Training    | 2   | 600  | 10% |
+  | Books       | 3   | 40   | 0%  |
+  ```
 * **Numbers** accept `1,234.50` (`,` is only a thousands separator in groups of three,
   `.` is the decimal point; `1.234,50` is an error). A leading or trailing currency
   symbol/code is ignored: `EUR 450`, `€450`, `450 EUR`. Negative rates are allowed (discounts).
@@ -75,10 +88,17 @@ rule: **round to cents, half away from zero** (`1.005 -> 1.01`, `-1.005 -> -1.01
 2. **Subtotal** = the exact sum of the rounded line totals (no further rounding).
 3. **Tax** = `subtotal x tax_rate / 100`, rounded to cents.
    `1,000.99` at `7.7%` is `77.07623`, shown as `77.08`.
+   With per-line rates, the lines are grouped by rate: each rate's **base** is the
+   exact sum of its rounded line totals, its tax is `base x rate / 100` rounded once
+   to cents, and the invoice **tax** is the sum of the per-rate taxes. With a single
+   rate this is exactly the rule above.
 4. **Total** = `subtotal + tax`.
 
-So the line totals shown on the invoice always add up to the subtotal, and subtotal
-plus tax always equals the total, to the cent. Rates and quantities with more than two
+So the line totals shown on the invoice always add up to the subtotal, the per-rate
+bases add up to the subtotal, and subtotal plus tax always equals the total, to the
+cent. When an invoice uses more than one rate, the PDF shows the rate under each
+line's price and one totals row per rate (`VAT 21%`, with its taxable amount) instead
+of the single `VAT (21%)` row. Rates and quantities with more than two
 decimals are used at full precision in step 1 and only displayed rounded (quantities
 show at most two decimals, trailing zeros dropped). An invoice whose amounts exceed
 about 7.9e28 is an error.
@@ -115,6 +135,16 @@ about 7.9e28 is an error.
   language changes every label on the invoice (headings, column names, status);
   dates and amounts keep their format.
 * `template`: front matter, then the config; none means the built-in template.
+* `tax_note`: front matter, then the client, then the config. A legal mention printed
+  under the totals. Presets are translated into the invoice language:
+  `reverse_charge` (reverse charge, Article 196 of Council Directive 2006/112/EC),
+  `exempt` (exempt from VAT) and `outside_scope` (outside the scope of VAT); any other
+  text is printed as written. `tax_note: false` on an invoice drops a client or config
+  note. The preset texts are labels (`tax_note_reverse_charge`, `tax_note_exempt`,
+  `tax_note_outside_scope`), so `labels:` in the config can reword them. They are
+  standard mentions, not legal advice: check what your jurisdiction requires.
+  `invgen build` (and the editor, on export) warns when an invoice charges no tax,
+  sets no `tax_note` and the client has `tax` lines (such as a VAT ID).
 * `issued_hash`: written by invgen when the invoice is first exported; see
   [Issued invoices](#issued-invoices-issued_hash). Do not write it by hand.
 * `sent_on`: `YYYY-MM-DD`, written by `invgen send --mark-sent`. Informational only.
@@ -264,6 +294,7 @@ number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
 currency: EUR
 tax_rate: 0
 due_days: 14
+tax_note: exempt                     # optional: default legal tax mention
 language: en                         # optional: en, es, de, fr, it, pt, nl
 labels:                              # optional: override single labels
   bill_to: Customer
@@ -290,6 +321,7 @@ clients:
     email: billing@example.com   # optional: recipient for `invgen send`
     currency: EUR      # optional per-client defaults
     tax_rate: 0
+    tax_note: reverse_charge   # optional: EU B2B services without VAT
     language: es       # optional: invoices for this client in Spanish
     rate: 450          # default rate used by templates
     unit: days
