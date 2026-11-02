@@ -57,6 +57,7 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
 | `invgen list` | Table of all invoices with yearly totals |
 | `invgen config [--edit]` | Show (or edit) the config file |
+| `invgen template --export [PATH] [--force]` | Write the built-in typst template (stdout without PATH) |
 
 Every command accepts `--config PATH` (or `INVGEN_CONFIG=PATH`) to use another config.
 Parse errors are reported as `file:line: message`.
@@ -84,6 +85,22 @@ table holds the line items, and loose paragraphs become notes. List items
 (`- Consulting: 21 days @ 450`) work instead of a table. Full spec:
 [docs/FORMAT.md](docs/FORMAT.md). A `config:` block in the front matter overrides
 any config key for a single invoice.
+
+## Branding, languages and templates
+
+```yaml
+# config.yaml
+language: es              # en, es, de, fr, it, pt, nl; also per client and per invoice
+labels:
+  bill_to: Cliente        # override any single label
+from:
+  logo: logo.svg          # SVG or PNG, top-left in the header; relative to the config file
+template: my-invoice.typ  # optional: your own typst layout
+```
+
+`invgen template --export my-invoice.typ` writes the built-in template as a
+starting point. The data a template receives is documented and versioned in
+[docs/TEMPLATES.md](docs/TEMPLATES.md).
 
 ## Keyboard shortcuts
 
