@@ -555,7 +555,10 @@ mod tests {
         let written = dated_invoice(Status::Overdue, Some(d(10, 31)));
         assert_eq!(written.effective_status(today), Status::Overdue);
         assert_eq!(written.days_overdue(today), Some(2));
-        assert_eq!(dated_invoice(Status::Overdue, None).days_overdue(today), None);
+        assert_eq!(
+            dated_invoice(Status::Overdue, None).days_overdue(today),
+            None
+        );
         assert_eq!(late.status_display(today), "overdue 12d");
         assert_eq!(future.status_display(today), "pending");
     }
