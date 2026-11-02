@@ -448,6 +448,9 @@ fn seq_of(number: &str) -> u64 {
         .unwrap_or(0)
 }
 
+/// Editor for `invgen config --edit` when neither VISUAL nor EDITOR is set.
+const DEFAULT_EDITOR: &str = if cfg!(windows) { "notepad" } else { "nano" };
+
 fn cmd_config(config_path: Option<&Path>, edit: bool) -> Result<ExitCode> {
     let path = config_path
         .map(Path::to_path_buf)
@@ -472,9 +475,9 @@ fn cmd_config(config_path: Option<&Path>, edit: bool) -> Result<ExitCode> {
                     .ok()
                     .filter(|s| !s.trim().is_empty())
             })
-            .unwrap_or_else(|| "nano".into());
+            .unwrap_or_else(|| DEFAULT_EDITOR.into());
         let mut parts = editor.split_whitespace();
-        let prog = parts.next().unwrap_or("nano");
+        let prog = parts.next().unwrap_or(DEFAULT_EDITOR);
         let status = std::process::Command::new(prog)
             .args(parts)
             .arg(&path)

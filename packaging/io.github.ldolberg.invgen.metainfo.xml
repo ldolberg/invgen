@@ -4,7 +4,7 @@
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>MIT</project_license>
   <name>invgen</name>
-  <summary>Write invoices in markdown, export clean PDFs</summary>
+  <summary>Turn markdown invoices into PDFs</summary>
   <developer id="io.github.ldolberg">
     <name>invgen contributors</name>
   </developer>
@@ -48,6 +48,10 @@
     <keyword>markdown</keyword>
     <keyword>billing</keyword>
   </keywords>
+  <branding>
+    <color type="primary" scheme_preference="light">#c7d2fe</color>
+    <color type="primary" scheme_preference="dark">#312e81</color>
+  </branding>
   <content_rating type="oars-1.1"/>
   <supports>
     <control>keyboard</control>
