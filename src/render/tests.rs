@@ -18,6 +18,7 @@ fn sample() -> Invoice {
             email: Some("alex@example.com".into()),
             phone: Some("+352 600 000 000".into()),
             logo: None,
+            ..Default::default()
         },
         to: Party {
             name: "Northwind Labs SL".into(),

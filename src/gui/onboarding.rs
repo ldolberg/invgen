@@ -137,6 +137,7 @@ impl Form {
                 email: setup::opt(&self.email),
                 phone: None,
                 logo: None,
+                ..Party::default()
             },
             payment: Payment {
                 holder: setup::opt(&self.holder),

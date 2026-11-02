@@ -84,7 +84,12 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
     let mut from: Party = fm.overlay("from", &cfg.from)?;
     from.logo = from.logo.as_deref().map(|p| cfg.resolve_path(p));
     let base_to = client.map(|c| c.party.clone()).unwrap_or_default();
-    let to: Party = fm.overlay("to", &base_to)?;
+    let mut to: Party = fm.overlay("to", &base_to)?;
+    // `buyer_reference:` (e-invoicing BT-10) is per invoice more often than
+    // per client, so it has a top-level shortcut.
+    if let Some(r) = fm.str("buyer_reference")? {
+        to.buyer_reference = Some(r.trim().to_string()).filter(|r| !r.is_empty());
+    }
     let payment: Payment = fm.overlay("payment", &cfg.payment)?;
 
     let date = fm
@@ -1264,6 +1269,7 @@ mod tests {
             email: Some("alex@example.com".into()),
             phone: Some("+352 600 000 000".into()),
             logo: None,
+            ..Party::default()
         };
         cfg.payment = Payment {
             holder: Some("ALEX MORGAN".into()),

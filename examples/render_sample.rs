@@ -35,6 +35,7 @@ fn base() -> Invoice {
             email: Some("alex@example.com".into()),
             phone: Some("+352 600 000 000".into()),
             logo: None,
+            ..Party::default()
         },
         to: Party {
             name: "Northwind Labs SL".into(),
@@ -48,6 +49,7 @@ fn base() -> Invoice {
             email: None,
             phone: None,
             logo: None,
+            ..Party::default()
         },
         payment: Payment {
             holder: Some("ALEX MORGAN".into()),

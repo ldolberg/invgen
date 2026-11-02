@@ -197,6 +197,7 @@ mod tests {
                 email: Some("alex@example.com".into()),
                 phone: None,
                 logo: None,
+                ..Party::default()
             },
             payment: Payment {
                 holder: Some("ALEX MORGAN".into()),

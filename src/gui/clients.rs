@@ -56,6 +56,7 @@ impl ClientForm {
                 email: setup::opt(&self.email),
                 phone: setup::opt(&self.phone),
                 logo: None,
+                ..Party::default()
             },
             currency: setup::opt(&self.currency).map(|c| c.to_uppercase()),
             tax_rate: setup::number(&self.tax_rate).ok().flatten(),
