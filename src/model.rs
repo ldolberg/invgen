@@ -24,6 +24,27 @@ pub struct Party {
     /// (`~` expanded, relative paths resolved against the config directory).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub logo: Option<PathBuf>,
+    /// E-invoicing only (not printed): VAT identifier with its country
+    /// prefix, e.g. `DE123456789`. When unset it is read from a `tax:` line
+    /// that looks like a VAT ID (see docs/E-INVOICING.md).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vat_id: Option<String>,
+    /// E-invoicing only: company registration number (EN 16931 BT-30/BT-47).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub legal_id: Option<String>,
+    /// E-invoicing only: ISO 3166-1 alpha-2 country code, e.g. `DE`. When
+    /// unset it is guessed from the last address line.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub country: Option<String>,
+    /// E-invoicing only: electronic address as `<scheme>:<id>` (Peppol EAS
+    /// code), e.g. `0208:0123456789`. Defaults to the email address.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub endpoint: Option<String>,
+    /// E-invoicing only: the reference the buyer asked to quote (BT-10),
+    /// e.g. a purchase order or a German Leitweg-ID. Set it on a client;
+    /// the invoice front matter `buyer_reference:` overrides it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub buyer_reference: Option<String>,
 }
 
 /// How the client should pay.

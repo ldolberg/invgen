@@ -10,6 +10,7 @@ language: en                         # en, es, de, fr, it, pt, nl (per client an
 # labels:                            # override single labels, any language
 #   bill_to: Customer
 # template: my-invoice.typ           # custom typst template, see docs/TEMPLATES.md
+# e_invoice: facturx                 # also: ubl, or [facturx, ubl]; see docs/E-INVOICING.md
 
 from:
   name: Alex Morgan
@@ -31,6 +32,8 @@ clients:
     name: Northwind Labs SL
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
+    vat_id: ESB12345678                  # e-invoicing (not printed), see docs/E-INVOICING.md
+    buyer_reference: NW-PO-2026          # the client's reference, required by Peppol
     currency: EUR
     tax_rate: 0
     tax_note: reverse_charge             # EU B2B cross-border: VAT due by the client

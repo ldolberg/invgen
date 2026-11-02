@@ -104,6 +104,18 @@ impl Renderer {
     }
 
     pub fn compile(&self, inv: &Invoice) -> anyhow::Result<Compiled> {
+        self.compile_with(inv, None)
+    }
+
+    /// Like [`Renderer::compile`], embedding `attachment` in the document
+    /// (export it with [`Compiled::pdf_a3b`] for a PDF/A-3 associated file).
+    /// The template is not involved: a `pdf.attach` call is appended to its
+    /// source, so custom templates get the attachment too.
+    pub fn compile_with(
+        &self,
+        inv: &Invoice,
+        attachment: Option<&Attachment>,
+    ) -> anyhow::Result<Compiled> {
         let mut files = Vec::new();
         let logo = match &inv.from.logo {
             Some(path) => {
@@ -128,10 +140,22 @@ impl Renderer {
             serde_json::to_vec(&data::View::new(inv, logo, qr)).context("serializing invoice")?;
         files.push((virtual_file("/invoice.json"), Bytes::new(json)));
 
-        let (source, root) = match &inv.template {
+        let (mut source, root) = match &inv.template {
             None => (self.shared.builtin.clone(), None),
             Some(path) => load_template(path)?,
         };
+        if let Some(a) = attachment {
+            let vpath = format!("/{}", a.name);
+            files.push((virtual_file(&vpath), Bytes::new(a.data.clone())));
+            let call = format!(
+                "\n#pdf.attach({}, relationship: {}, mime-type: {}, description: {})\n",
+                typst_str(&vpath),
+                typst_str(a.relationship),
+                typst_str(a.mime_type),
+                typst_str(a.description),
+            );
+            source = Source::new(source.id(), format!("{}{call}", source.text()));
+        }
         let d = inv.date;
         let world = InvoiceWorld {
             shared: &self.shared,
@@ -155,6 +179,32 @@ impl Renderer {
             number: inv.number.clone(),
         })
     }
+}
+
+/// A file embedded in the PDF, e.g. the Factur-X XML.
+pub struct Attachment {
+    /// File name inside the PDF, e.g. `factur-x.xml`.
+    pub name: &'static str,
+    pub data: Vec<u8>,
+    pub mime_type: &'static str,
+    pub description: &'static str,
+    /// PDF/A-3 `AFRelationship`: `source`, `data`, `alternative` or `supplement`.
+    pub relationship: &'static str,
+}
+
+/// A typst string literal.
+fn typst_str(s: &str) -> String {
+    let mut out = String::from("\"");
+    for c in s.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 /// Virtual path the EPC payment QR code (SVG) is served at.
@@ -263,6 +313,26 @@ impl Compiled {
         typst_pdf::pdf(&self.doc, &options).map_err(|errs| {
             let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
             anyhow!("PDF export failed: {}", msgs.join("; "))
+        })
+    }
+
+    /// PDF/A-3b export, required for Factur-X. `date` becomes the creation
+    /// date (it dates the embedded files too).
+    pub fn pdf_a3b(&self, date: chrono::NaiveDate) -> anyhow::Result<Vec<u8>> {
+        let standards = typst_pdf::PdfStandards::new(&[typst_pdf::PdfStandard::A_3b])
+            .map_err(|e| anyhow!("PDF/A-3b: {}", e.message()))?;
+        let datetime =
+            Datetime::from_ymd_hms(date.year(), date.month() as u8, date.day() as u8, 0, 0, 0)
+                .ok_or_else(|| anyhow!("invalid date {date}"))?;
+        let options = typst_pdf::PdfOptions {
+            ident: typst::foundations::Smart::Custom(self.number.clone()),
+            standards,
+            timestamp: Some(typst_pdf::Timestamp::new_utc(datetime)),
+            ..Default::default()
+        };
+        typst_pdf::pdf(&self.doc, &options).map_err(|errs| {
+            let msgs: Vec<String> = errs.iter().map(|e| e.message.to_string()).collect();
+            anyhow!("PDF/A-3b export failed: {}", msgs.join("; "))
         })
     }
 

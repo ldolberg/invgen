@@ -26,6 +26,7 @@ due_days: 14
 # labels:                            # override single labels
 #   bill_to: Customer
 # template: my-invoice.typ           # custom typst template (`invgen template --export`)
+# e_invoice: facturx                 # e-invoices: facturx, ubl or [facturx, ubl]
 # email:                             # `invgen send` message; placeholders:
 #   subject: "Invoice {number}"      # {number} {total} {due} {client} {from}
 #   body: |
@@ -135,6 +136,14 @@ pub struct Config {
     /// (`reverse_charge`, `exempt`, `outside_scope`) or free text.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tax_note: Option<String>,
+    /// E-invoices `invgen build` produces by default: `facturx` (PDF/A-3
+    /// with embedded XML), `ubl` (Peppol XML next to the PDF), or a list.
+    /// See docs/E-INVOICING.md.
+    #[serde(
+        with = "crate::einvoice::formats",
+        skip_serializing_if = "Vec::is_empty"
+    )]
+    pub e_invoice: Vec<crate::einvoice::Format>,
     /// Number and date formatting on the PDF (`locale`, `number_format`,
     /// `date_format`). Empty follows `language`.
     #[serde(flatten)]
@@ -162,6 +171,7 @@ impl Default for Config {
             template: None,
             email: EmailConfig::default(),
             tax_note: None,
+            e_invoice: Vec::new(),
             format: FormatOptions::default(),
             dir: None,
         }

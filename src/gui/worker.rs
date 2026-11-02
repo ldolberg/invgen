@@ -2,6 +2,7 @@
 //! The UI only ever sends jobs and polls results, so it never blocks.
 
 use crate::config::Config;
+use crate::einvoice;
 use crate::model::{Invoice, file_stem};
 use crate::parse::{ParseError, parse_invoice};
 use crate::render::{Compiled, PageImage, Renderer};
@@ -159,7 +160,19 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
                                 (&fresh.0, &fresh.1)
                             }
                         };
-                        let bytes = compiled.pdf().map_err(|e| format!("{e:#}"))?;
+                        // `e_invoice` in the config also applies to exports
+                        // from the editor (see docs/E-INVOICING.md).
+                        let facturx = cfg.e_invoice.contains(&einvoice::Format::FacturX);
+                        let ubl = if cfg.e_invoice.contains(&einvoice::Format::Ubl) {
+                            Some(einvoice::ubl_xml(invoice).map_err(|e| e.to_string())?)
+                        } else {
+                            None
+                        };
+                        let bytes = match (facturx, &renderer) {
+                            (true, Some(r)) => einvoice::facturx_pdf(r, invoice),
+                            _ => compiled.pdf(),
+                        }
+                        .map_err(|e| format!("{e:#}"))?;
                         let path = path.unwrap_or_else(|| {
                             dir.join(format!("{}.pdf", file_stem(&invoice.number)))
                         });
@@ -167,6 +180,10 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
                             std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
                         }
                         std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
+                        if let Some(xml) = ubl {
+                            std::fs::write(path.with_extension("xml"), xml)
+                                .map_err(|e| e.to_string())?;
+                        }
                         Ok((path, Box::new(invoice.clone())))
                     })();
                     let _ = tx.send(Outcome::Exported(res));
