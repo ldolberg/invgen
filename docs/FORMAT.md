@@ -42,6 +42,8 @@ Any other paragraph becomes a note under the table.
 * **Numbers** accept `1,234.50` (`,` is only a thousands separator in groups of three,
   `.` is the decimal point; `1.234,50` is an error). A leading or trailing currency
   symbol/code is ignored: `EUR 450`, `€450`, `450 EUR`. Negative rates are allowed (discounts).
+  Numbers are kept as exact decimals (no binary floating point), so `0.1` is exactly
+  `0.1`. See [Totals and rounding](#totals-and-rounding).
 * **List items** are an alternative to a table, used only when the document has no table:
   `- Senior Software Engineer: 21 days @ 450` (`@` or ` x `). A list is an items list
   when its first entry has that shape; then every entry must have it. The `detail` is the
@@ -60,11 +62,31 @@ Any other paragraph becomes a note under the table.
 * An invoice without items is an error. Errors carry the 1-based line in the whole
   file (front matter included).
 
+## Totals and rounding
+
+All amounts are computed with exact decimal arithmetic, and there is one rounding
+rule: **round to cents, half away from zero** (`1.005 -> 1.01`, `-1.005 -> -1.01`,
+`1.004 -> 1.00`). It is applied in this order:
+
+1. **Line total** = `quantity x rate`, rounded to cents.
+   `7.5 hours @ 133.33` is `999.975`, shown as `999.98`.
+2. **Subtotal** = the exact sum of the rounded line totals (no further rounding).
+3. **Tax** = `subtotal x tax_rate / 100`, rounded to cents.
+   `1,000.99` at `7.7%` is `77.07623`, shown as `77.08`.
+4. **Total** = `subtotal + tax`.
+
+So the line totals shown on the invoice always add up to the subtotal, and subtotal
+plus tax always equals the total, to the cent. Rates and quantities with more than two
+decimals are used at full precision in step 1 and only displayed rounded (quantities
+show at most two decimals, trailing zeros dropped). An invoice whose amounts exceed
+about 7.9e28 is an error.
+
 ## Front matter resolution
 
 * No front matter at all is fine: everything takes its default. Unknown keys are ignored.
 * `currency`, `tax_rate`: front matter, then the client, then the config.
-  `tax_rate` is a percent (`21` or `"21%"`).
+  `tax_rate` is a percent (`21`, `7.7` or `"21%"`); the same forms work for
+  `tax_rate` and `rate` in the config.
 * `client:` must be a key of `clients:` in the config (the error lists the known ones).
   Without `client:` and without `to:`, the recipient is empty.
 * `number`: when absent, the next number from the invoices dir (see below). Prefer
@@ -74,6 +96,10 @@ Any other paragraph becomes a note under the table.
   (front matter `due_days`, else config `due_days`). `due: false` (or `due: none`)
   leaves the due date off the invoice.
 * `status`: `pending` (default), `paid`, `overdue`, `draft`; case-insensitive.
+  The PDF always shows the status as written. `invgen list` and the editor sidebar
+  show an effective status instead: a `pending` invoice whose due date has passed
+  shows as `overdue` with the days late (`overdue 12d`). Any other written status
+  wins, and an invoice without a due date (`due: false`) is never overdue automatically.
 * `signature`: defaults to `from.name`; `false` hides it, a string replaces it.
 * `tax_label` defaults to the `tax` label of the invoice language (`VAT`, `IVA`,
   `USt.`, `TVA`, `Btw`...); `accent` defaults to `#111827` (`#rgb` or `#rrggbb`).
@@ -177,8 +203,12 @@ clients:
 ```
 
 Sequence numbers are global and monotonically increasing across years
-(EINV-2025-13 is followed by EINV-2026-14). The next number scans `invoices_dir`
-(and up to two levels of subfolders) for `<prefix>-YYYY-N*.md` / `.pdf` files, with N
+(EINV-2025-13 is followed by EINV-2026-14). The next number scans the invoice
+library (see below) for `<prefix>-YYYY-N*.md` / `.pdf` files, with N
 padded or not (`EINV-2025-1`, `EINV-2025-02`), takes the highest N of any year plus one
 and formats it with at least two digits: `EINV-2026-01` for an empty directory.
 `~` in `invoices_dir` is expanded; the default is `~/Documents/Invoices`.
+
+The invoice library is `invoices_dir` plus up to two levels of subfolders
+(`Invoices/2026/`, `Invoices/clients/acme/`); hidden folders such as `.git` are
+skipped. `invgen list`, the editor sidebar and next-number scanning all use it.

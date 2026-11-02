@@ -1,6 +1,6 @@
 //! User configuration (~/.config/invgen/config.yaml). See docs/FORMAT.md.
 
-use crate::model::{Party, Payment};
+use crate::model::{Decimal, Party, Payment, num, round_cents};
 use anyhow::Context;
 use chrono::{Datelike, Local, Months, NaiveDate, Weekday};
 use serde::{Deserialize, Serialize};
@@ -13,8 +13,10 @@ pub struct ClientConfig {
     #[serde(flatten)]
     pub party: Party,
     pub currency: Option<String>,
-    pub tax_rate: Option<f64>,
-    pub rate: Option<f64>,
+    #[serde(with = "num::option")]
+    pub tax_rate: Option<Decimal>,
+    #[serde(with = "num::option")]
+    pub rate: Option<Decimal>,
     pub unit: Option<String>,
     pub description: Option<String>,
     /// Label language for this client's invoices (overrides the config).
@@ -27,7 +29,8 @@ pub struct Config {
     pub invoices_dir: PathBuf,
     pub number_prefix: String,
     pub currency: String,
-    pub tax_rate: f64,
+    #[serde(with = "num")]
+    pub tax_rate: Decimal,
     pub due_days: i64,
     pub from: Party,
     pub payment: Payment,
@@ -52,7 +55,7 @@ impl Default for Config {
             invoices_dir: expand_tilde(Path::new("~/Documents/Invoices")),
             number_prefix: "EINV".into(),
             currency: "EUR".into(),
-            tax_rate: 0.0,
+            tax_rate: Decimal::ZERO,
             due_days: 14,
             from: Party::default(),
             payment: Payment::default(),
@@ -156,8 +159,12 @@ impl Config {
     /// Next invoice number by scanning invoices_dir for `<prefix>-<year>-<seq>.(md|pdf)`
     /// (also accepts unpadded seq like EINV-2025-1). Seq is global across years.
     pub fn next_number(&self, year: i32) -> String {
-        let mut max = 0u64;
-        scan_sequences(&self.invoices_dir, &self.number_prefix, 2, &mut max);
+        let max = crate::library::discover_with_extensions(&self.invoices_dir, &["md", "pdf"])
+            .iter()
+            .filter_map(|p| p.file_stem()?.to_str())
+            .filter_map(|s| sequence_of(s, &self.number_prefix))
+            .max()
+            .unwrap_or(0);
         format!("{}-{}-{:02}", self.number_prefix, year, max + 1)
     }
 
@@ -186,7 +193,7 @@ impl Config {
         let unit = defaults
             .and_then(|c| c.unit.clone())
             .unwrap_or_else(|| "days".into());
-        let rate = defaults.and_then(|c| c.rate).unwrap_or(0.0);
+        let rate = round_cents(defaults.and_then(|c| c.rate).unwrap_or_default());
         let currency = defaults
             .and_then(|c| c.currency.clone())
             .unwrap_or_else(|| self.currency.clone());
@@ -259,37 +266,6 @@ fn collapse_tilde(path: &Path) -> PathBuf {
     }
 }
 
-/// Collect the highest sequence number of `<prefix>-YYYY-N[...].(md|pdf)` files
-/// in `dir`, descending `depth` levels into subdirectories (e.g. per-year folders).
-fn scan_sequences(dir: &Path, prefix: &str, depth: u32, max: &mut u64) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth > 0 {
-                scan_sequences(&path, prefix, depth - 1, max);
-            }
-            continue;
-        }
-        let ext_ok = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("pdf"));
-        if !ext_ok {
-            continue;
-        }
-        if let Some(seq) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| sequence_of(s, prefix))
-        {
-            *max = (*max).max(seq);
-        }
-    }
-}
-
 /// `EINV-2025-02` -> Some(2). Trailing text after the digits is allowed
 /// (`EINV-2025-02-acme`), but the year must be exactly four digits.
 fn sequence_of(stem: &str, prefix: &str) -> Option<u64> {
@@ -330,7 +306,7 @@ mod tests {
         let c = Config::default();
         assert_eq!(c.number_prefix, "EINV");
         assert_eq!(c.currency, "EUR");
-        assert_eq!(c.tax_rate, 0.0);
+        assert_eq!(c.tax_rate, Decimal::ZERO);
         assert_eq!(c.due_days, 14);
         assert!(c.invoices_dir.ends_with("Documents/Invoices"));
         assert!(!c.invoices_dir.starts_with("~"));
@@ -397,7 +373,7 @@ mod tests {
         assert_eq!(cfg.number_prefix, "INV");
         assert_eq!(cfg.currency, "EUR");
         assert_eq!(cfg.clients["acme"].party.name, "ACME");
-        assert_eq!(cfg.clients["acme"].rate, Some(100.0));
+        assert_eq!(cfg.clients["acme"].rate, Some(Decimal::from(100)));
 
         let out = dir.path().join("fresh/sub/config.yaml");
         cfg.save_to(&out).unwrap();
@@ -406,6 +382,21 @@ mod tests {
         let back = Config::load_from(&out).unwrap();
         assert_eq!(back.invoices_dir, cfg.invoices_dir);
         assert_eq!(back.clients["acme"].party.name, "ACME");
+        assert_eq!(back.clients["acme"].rate, Some(Decimal::from(100)));
+        assert_eq!(back.tax_rate, Decimal::ZERO);
+    }
+
+    #[test]
+    fn rates_accept_numbers_and_percent_strings() {
+        let cfg: Config = serde_yaml_ng::from_str(
+            "tax_rate: \"21%\"\nclients:\n  a:\n    tax_rate: 7.7\n    rate: \"1,234.50\"\n  b:\n    rate: null\n",
+        )
+        .unwrap();
+        assert_eq!(cfg.tax_rate, Decimal::from(21));
+        assert_eq!(cfg.clients["a"].tax_rate, Some(Decimal::new(77, 1)));
+        assert_eq!(cfg.clients["a"].rate, Some(Decimal::new(123450, 2)));
+        assert_eq!(cfg.clients["b"].rate, None);
+        assert!(serde_yaml_ng::from_str::<Config>("tax_rate: lots").is_err());
     }
 
     #[test]
@@ -478,7 +469,7 @@ mod tests {
                     name: "ACME".into(),
                     ..Party::default()
                 },
-                rate: Some(450.0),
+                rate: Some(Decimal::new(45050, 2)),
                 unit: Some("days".into()),
                 description: Some("Senior Software Engineer".into()),
                 ..ClientConfig::default()
@@ -494,9 +485,9 @@ mod tests {
         assert_eq!(inv.items.len(), 1);
         let item = &inv.items[0];
         assert_eq!(item.description, "Senior Software Engineer");
-        assert_eq!(item.quantity, 22.0);
+        assert_eq!(item.quantity, Decimal::from(22));
         assert_eq!(item.unit, "days");
-        assert_eq!(item.rate, 450.0);
+        assert_eq!(item.rate, Decimal::new(45050, 2));
         assert_eq!(item.detail.as_deref(), Some("October 2026 period"));
         assert!(inv.notes.is_empty(), "{:?}", inv.notes);
         assert_eq!(inv.due, NaiveDate::from_ymd_opt(2026, 11, 16));

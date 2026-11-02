@@ -1,5 +1,5 @@
 use super::*;
-use crate::model::{LineItem, Party, Payment, Status};
+use crate::model::{Decimal, LineItem, Party, Payment, Status};
 use chrono::NaiveDate;
 use std::time::Instant;
 
@@ -33,11 +33,11 @@ fn sample() -> Invoice {
         items: vec![LineItem {
             description: "Senior Software Engineer #[panic()] $x$ *bold*".into(),
             detail: Some("October 2026 period".into()),
-            quantity: 21.0,
+            quantity: Decimal::from(21),
             unit: "days".into(),
-            rate: 450.0,
+            rate: Decimal::from(450),
         }],
-        tax_rate: 0.0,
+        tax_rate: Decimal::ZERO,
         tax_label: "VAT".into(),
         notes: vec!["Reverse charge.".into()],
         signature: Some("Alex Morgan".into()),
@@ -69,7 +69,7 @@ fn compiles_one_page_pdf() {
 
     // Warm recompile with a small edit (what the live preview does).
     let mut inv2 = inv.clone();
-    inv2.items[0].quantity = 22.0;
+    inv2.items[0].quantity = Decimal::from(22);
     let t = Instant::now();
     let c2 = r.compile(&inv2).unwrap();
     let t_warm = t.elapsed();
@@ -83,9 +83,16 @@ fn compiles_one_page_pdf() {
 
 #[test]
 fn qty_and_accent_formatting() {
-    assert_eq!(data::format_qty(21.0), "21");
-    assert_eq!(data::format_qty(7.5), "7.5");
-    assert_eq!(data::format_qty(0.0), "0");
+    let d = |s: &str| s.parse::<Decimal>().unwrap();
+    assert_eq!(data::format_qty(d("21")), "21");
+    assert_eq!(data::format_qty(d("21.00")), "21");
+    assert_eq!(data::format_qty(d("7.5")), "7.5");
+    assert_eq!(data::format_qty(d("0")), "0");
+    assert_eq!(data::format_qty(d("-0.001")), "0");
+    assert_eq!(data::format_qty(d("0.125")), "0.13");
+    assert_eq!(data::format_qty(d("1234.5")), "1234.5");
+    assert_eq!(data::format_qty(d("-2.5")), "-2.5");
+    assert_eq!(data::format_qty(d("100")), "100");
     assert_eq!(data::normalize_accent("#2563EB"), "#2563eb");
     assert_eq!(data::normalize_accent("red\"); panic()"), "#111827");
 }

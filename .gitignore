@@ -6,3 +6,4 @@
 /build-flatpak-repo
 /.flatpak-builder
 /build-pages
+/guide/book
