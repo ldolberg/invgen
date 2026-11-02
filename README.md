@@ -104,6 +104,7 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen new --from NUMBER\|last [--client KEY]` | Duplicate an invoice (items, notes, overrides) as the next one, with today's date and the period moved forward |
 | `invgen new --credit NUMBER [--open]` | Create a credit note reversing invoice NUMBER, prefilled with its items ([credit notes](docs/FORMAT.md#credit-notes)) |
 | `invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]` | Render a PDF (and optional PNG previews). The first export of a non-draft invoice locks it (`issued_hash`); later builds warn when the issued content changed, `--strict` refuses |
+| `invgen build FILE.md --facturx` / `--ubl` | E-invoices: a Factur-X / ZUGFeRD PDF (PDF/A-3b with the EN 16931 XML inside), and/or `<number>.xml` in UBL (Peppol BIS Billing 3.0) next to the PDF ([docs/E-INVOICING.md](docs/E-INVOICING.md)) |
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
 | `invgen list [--year YYYY] [--client KEY\|NAME] [--status S]... [--unpaid]` | Table of the invoices (including subfolders) with yearly totals and the outstanding balance by age (not due yet, 1-30, 31-60, 61+ days late); pending invoices past due show as `overdue Nd`; credit notes show negative totals, are marked `credit note for NUMBER` and net out. Filters combine and totals respect them |
 | `invgen list --format csv\|json` | Export the (filtered) invoices for accounting tools and scripts, see [docs/EXPORT.md](docs/EXPORT.md) |
@@ -155,6 +156,25 @@ the totals then show one row per rate. `tax_note: reverse_charge` (also `exempt`
 `outside_scope` or free text; per invoice, per client or in the config) prints a
 translated legal mention under the totals, and `invgen build` warns when an invoice
 charges no tax to a client with a VAT ID and has no such note.
+
+## E-invoices
+
+```yaml
+# config.yaml
+e_invoice: facturx        # every build and editor export: facturx, ubl or [facturx, ubl]
+clients:
+  northwind:
+    vat_id: ESB12345678   # e-invoicing data, never printed (also legal_id, country, endpoint)
+    buyer_reference: PO-1 # the client's reference; Peppol requires it
+```
+
+`invgen build --facturx` writes a Factur-X / ZUGFeRD PDF: the same invoice as a
+PDF/A-3b with the structured EN 16931 XML (`factur-x.xml`) embedded, readable by
+accounting software in France, Germany and beyond. `--ubl` writes the UBL XML that
+Peppol access points expect. VAT IDs, countries and postcodes are read from your
+`tax:` and `address:` lines when possible; anything missing is listed, with the key
+to set, before a file is written. Mapping table and rules:
+[docs/E-INVOICING.md](docs/E-INVOICING.md).
 
 ## Branding, languages and templates
 

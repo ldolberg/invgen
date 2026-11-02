@@ -23,6 +23,7 @@ date_format: "%d.%m.%Y"       # optional: strftime pattern for dates on the PDF
 number_format:                # optional: override single parts of the locale
   thousands: "'"
 template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
+buyer_reference: PO-4711      # optional: e-invoicing BT-10, required by Peppol (docs/E-INVOICING.md)
 ---
 
 # Senior Software Engineer
@@ -391,10 +392,32 @@ editor preview simply shows no code. `qr: false` turns it off for one invoice.
 Credit notes never show the code (there is nothing for the client to pay), without
 a warning.
 
+## E-invoices (Factur-X, UBL)
+
+`invgen build --facturx` writes the PDF as a Factur-X / ZUGFeRD hybrid (PDF/A-3b with
+the EN 16931 XML embedded); `invgen build --ubl` also writes `<number>.xml` (UBL,
+Peppol BIS Billing 3.0) next to the PDF. `e_invoice: facturx`, `ubl` or
+`[facturx, ubl]` in the config does the same for every build and editor export;
+`--no-e-invoice` turns it off for one build. Before anything is written, the invoice
+is checked and every missing mandatory field is listed. These optional party fields
+exist for e-invoicing only and are never printed:
+
+```yaml
+from:                             # or a client, or `to:` in an invoice
+  vat_id: DE123456789             # VAT ID with country prefix; default: read from `tax:`
+  legal_id: HRB 12345             # company registration number
+  country: DE                     # ISO code; default: guessed from the last address line
+  endpoint: "0208:0123456789"     # Peppol address; default: from the VAT ID
+  buyer_reference: PO-4711        # clients only: reference to quote (also front matter)
+```
+
+See [E-INVOICING.md](E-INVOICING.md) for the mapping, the heuristics and the rules.
+
 ## Front matter overrides
 
 Any of `from:`, `to:`, `payment:` may be given inline using the same shape as the
-config (`name`, `address: [..]`, `tax: [..]`, `email`, `phone` / `holder`, `iban`, `bic`, `notes`, `qr`).
+config (`name`, `address: [..]`, `tax: [..]`, `email`, `phone`, `vat_id`, `legal_id`,
+`country`, `endpoint`, `buyer_reference` / `holder`, `iban`, `bic`, `notes`, `qr`).
 Inline values replace the config ones field by field.
 
 ### Overriding any config key: `config:`
@@ -447,6 +470,7 @@ number_format:                       # optional: thousands, decimal, currency, c
 labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
+e_invoice: facturx                   # optional: facturx, ubl or [facturx, ubl] (E-INVOICING.md)
 email:                               # optional: `invgen send` message (see Sending)
   subject: "Invoice {number}"
   body: "Hello,\n\nplease find attached invoice {number} for {total}.\n\n{from}"
@@ -468,6 +492,8 @@ clients:
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
     email: billing@example.com   # optional: recipient for `invgen send`
+    vat_id: ESB12345678          # optional: e-invoicing only (E-INVOICING.md)
+    buyer_reference: NW-PO-2026  # optional: e-invoicing BT-10, required by Peppol
     currency: EUR      # optional per-client defaults
     tax_rate: 0
     tax_note: reverse_charge   # optional: EU B2B services without VAT

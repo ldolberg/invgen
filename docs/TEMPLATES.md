@@ -50,6 +50,15 @@ Typst packages (`@preview/...`) are not available: rendering is offline and
 hermetic. The bundled fonts are Inter (regular, italic, medium, semibold, bold)
 and Mrs Saint Delafield (used for the signature), plus Typst's default fonts.
 
+### Factur-X
+
+With `--facturx` (or `e_invoice: facturx`) invgen appends one
+`#pdf.attach("/factur-x.xml", ...)` line to the end of the template source and
+exports PDF/A-3b, so a custom template becomes a Factur-X PDF without changes. The
+template must then stay within PDF/A-3b (fonts are always embedded; the export
+reports anything else, such as an image format PDF/A forbids). See
+[E-INVOICING.md](E-INVOICING.md).
+
 ### Errors
 
 A template that fails to compile reports the template file and the line, for
