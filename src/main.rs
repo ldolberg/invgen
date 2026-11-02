@@ -303,22 +303,6 @@ fn cmd_watch(config_path: Option<&Path>, file: &Path, output: Option<&Path>) -> 
     Ok(ExitCode::SUCCESS)
 }
 
-fn collect_markdown(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth > 0 {
-                collect_markdown(&path, depth - 1, out);
-            }
-        } else if path.extension().is_some_and(|e| e == "md") {
-            out.push(path);
-        }
-    }
-}
-
 fn cmd_list(cfg: &Config) -> Result<ExitCode> {
     let st = Style::stdout();
     let dir = &cfg.invoices_dir;
@@ -328,8 +312,8 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
             dir.display()
         );
     }
-    let mut files = Vec::new();
-    collect_markdown(dir, 2, &mut files);
+    let files = invgen::library::discover(dir);
+    let today = Local::now().date_naive();
     let mut rows = Vec::new();
     let mut failed = false;
     for f in &files {
@@ -415,8 +399,8 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
         }
         last_year = Some(year);
         let client: String = inv.to.name.chars().take(w_client).collect();
-        let status = format!("{:<7}", inv.status.label());
-        let status = match inv.status {
+        let status = inv.status_display(today);
+        let status = match inv.effective_status(today) {
             Status::Paid => st.green(&status),
             Status::Overdue => st.red_bold(&status),
             Status::Draft => st.dim(&status),

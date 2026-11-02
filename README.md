@@ -60,7 +60,7 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen new [--client KEY] [--open]` | Create the next numbered invoice |
 | `invgen build FILE.md [-o OUT.pdf] [--png DIR]` | Render a PDF (and optional PNG previews) |
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
-| `invgen list` | Table of all invoices with yearly totals |
+| `invgen list` | Table of all invoices (including subfolders) with yearly totals; pending invoices past due show as `overdue Nd` |
 | `invgen config [--edit]` | Show (or edit) the config file |
 
 Every command accepts `--config PATH` (or `INVGEN_CONFIG=PATH`) to use another config.
