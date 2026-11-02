@@ -25,7 +25,7 @@ pub struct ClientForm {
     pub description: String,
 }
 
-fn num(n: Option<f64>) -> String {
+fn num(n: Option<crate::model::Decimal>) -> String {
     n.map(|n| n.to_string()).unwrap_or_default()
 }
 

@@ -3,7 +3,9 @@
 
 use serde::Serialize;
 
-use crate::model::{Invoice, Party, Status, format_amount, format_date, format_money};
+use crate::model::{
+    Decimal, Invoice, Party, Status, format_amount, format_date, format_money, round_cents,
+};
 
 #[derive(Serialize)]
 pub(super) struct View {
@@ -68,11 +70,15 @@ fn opt(s: &Option<String>) -> Option<String> {
         .map(str::to_string)
 }
 
-/// 21.0 -> "21", 7.5 -> "7.5", 0.125 -> "0.13"
-pub(super) fn format_qty(q: f64) -> String {
-    let s = format!("{:.2}", q);
-    let s = s.trim_end_matches('0').trim_end_matches('.');
-    if s == "-0" { "0".into() } else { s.to_string() }
+/// 21 -> "21", 7.50 -> "7.5", 0.125 -> "0.13" (at most 2 decimals, rounded
+/// half away from zero, no trailing zeros).
+pub(super) fn format_qty(q: Decimal) -> String {
+    let r = round_cents(q).normalize();
+    if r.is_zero() {
+        "0".into()
+    } else {
+        r.to_string()
+    }
 }
 
 /// Accept "#rgb" / "#rrggbb" (with or without '#'); anything else falls back.

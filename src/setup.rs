@@ -3,7 +3,7 @@
 
 use crate::config::{ClientConfig, DEFAULT_CONFIG};
 use crate::config_edit::{self, Edit, EditError, Field};
-use crate::model::{Party, Payment};
+use crate::model::{Decimal, Party, Payment, num};
 
 /// Everything the welcome form asks for.
 #[derive(Debug, Clone, Default)]
@@ -14,7 +14,7 @@ pub struct Setup {
     pub client: ClientConfig,
     pub number_prefix: String,
     pub currency: String,
-    pub tax_rate: f64,
+    pub tax_rate: Decimal,
     /// As typed, `~` allowed (it is written to the file unexpanded).
     pub invoices_dir: String,
 }
@@ -58,16 +58,29 @@ pub fn opt(s: &str) -> Option<String> {
     (!t.is_empty()).then(|| t.to_string())
 }
 
-/// Parse an optional number field; accepts a decimal comma (`12,5`).
-pub fn number(s: &str) -> Result<Option<f64>, String> {
+/// Parse an optional number field exactly as typed (`450`, `7.7`, `21%`).
+/// A single comma not followed by three digits is a decimal comma (`12,5`);
+/// otherwise commas group thousands (`1,234.50`).
+pub fn number(s: &str) -> Result<Option<Decimal>, String> {
     let t = s.trim();
     if t.is_empty() {
         return Ok(None);
     }
-    match t.replace(',', ".").parse::<f64>() {
-        Ok(n) if n.is_finite() => Ok(Some(n)),
-        _ => Err(format!("`{t}` is not a number")),
+    let bad = || format!("`{t}` is not a number");
+    let mut v = t.trim_end_matches('%').trim().to_string();
+    if v.matches(',').count() == 1
+        && !v.contains('.')
+        && v.split(',').nth(1).is_some_and(|f| f.len() != 3)
+    {
+        v = v.replace(',', ".");
     }
+    let plain = v.replace(',', "");
+    let d: Decimal = plain.parse().map_err(|_| bad())?;
+    // Commas must be real thousands groups: the invoice parser decides that.
+    if v.contains(',') && num::from_text(&v) != Some(d) {
+        return Err(bad());
+    }
+    Ok(Some(d))
 }
 
 /// Check an IBAN: country code, length and the ISO 13616 mod-97 checksum.
@@ -171,6 +184,10 @@ mod tests {
     use super::*;
     use crate::config::Config;
 
+    fn d(s: &str) -> Decimal {
+        s.parse().unwrap()
+    }
+
     fn sample() -> Setup {
         Setup {
             from: Party {
@@ -194,14 +211,14 @@ mod tests {
                     tax: vec!["Tax ID: B12345678".into()],
                     ..Party::default()
                 },
-                rate: Some(450.0),
+                rate: Some(d("450")),
                 unit: Some("days".into()),
                 description: Some("Senior Software Engineer".into()),
                 ..ClientConfig::default()
             },
             number_prefix: "EINV".into(),
             currency: "EUR".into(),
-            tax_rate: 17.0,
+            tax_rate: d("17"),
             invoices_dir: "~/Documents/Invoices".into(),
         }
     }
@@ -249,11 +266,11 @@ mod tests {
             Some("DE89 3704 0044 0532 0130 00")
         );
         assert_eq!(cfg.number_prefix, "EINV");
-        assert_eq!(cfg.tax_rate, 17.0);
+        assert_eq!(cfg.tax_rate, d("17"));
         let c = &cfg.clients["northwind"];
         assert_eq!(c.party.name, "Northwind Labs SL");
         assert_eq!(c.party.address, vec!["Calle Mayor, 12", "28001 Madrid"]);
-        assert_eq!(c.rate, Some(450.0));
+        assert_eq!(c.rate, Some(d("450")));
         assert_eq!(c.description.as_deref(), Some("Senior Software Engineer"));
         assert_eq!(cfg.clients.len(), 1);
     }
@@ -293,7 +310,7 @@ mod tests {
         let inv = crate::parse::parse_invoice(&md, &cfg).unwrap();
         assert_eq!(inv.to.name, "Northwind Labs SL");
         assert_eq!(inv.from.name, "Alex Morgan");
-        assert_eq!(inv.items[0].rate, 450.0);
+        assert_eq!(inv.items[0].rate, d("450"));
         // The same number is not handed out twice.
         let second = cfg.write_new_invoice(Some("northwind")).unwrap();
         assert_ne!(first, second);
@@ -320,10 +337,17 @@ mod tests {
         assert_eq!(opt("  "), None);
         assert_eq!(opt(" x "), Some("x".into()));
         assert_eq!(number(""), Ok(None));
-        assert_eq!(number("12,5"), Ok(Some(12.5)));
-        assert_eq!(number(" 450 "), Ok(Some(450.0)));
+        assert_eq!(number("12,5"), Ok(Some(d("12.5"))));
+        assert_eq!(number(" 450 "), Ok(Some(d("450"))));
         assert!(number("abc").is_err());
         assert!(number("inf").is_err());
+        assert_eq!(number("7.7"), Ok(Some(d("7.7"))));
+        assert_eq!(number("450.0").unwrap().unwrap().to_string(), "450.0");
+        assert_eq!(number("21%"), Ok(Some(d("21"))));
+        assert_eq!(number("1,234.50"), Ok(Some(d("1234.50"))));
+        assert_eq!(number("1,500"), Ok(Some(d("1500"))));
+        assert!(number("12x").is_err());
+        assert!(number("1,2,3").is_err());
         assert!(check_prefix("EINV").is_ok());
         assert!(check_prefix("").is_err());
         assert!(check_prefix("A/B").is_err());

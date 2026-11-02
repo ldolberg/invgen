@@ -158,7 +158,10 @@ impl Form {
             },
             number_prefix: self.prefix.trim().to_string(),
             currency: self.currency.trim().to_uppercase(),
-            tax_rate: setup::number(&self.tax_rate).ok().flatten().unwrap_or(0.0),
+            tax_rate: setup::number(&self.tax_rate)
+                .ok()
+                .flatten()
+                .unwrap_or_default(),
             invoices_dir: self.invoices_dir.trim().to_string(),
         }
     }
@@ -360,6 +363,11 @@ pub fn show(form: &mut Form, ctx: &egui::Context, p: &Palette, config: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::Decimal;
+
+    fn d(s: &str) -> Decimal {
+        s.parse().unwrap()
+    }
 
     #[test]
     fn form_maps_to_setup() {
@@ -381,7 +389,7 @@ mod tests {
             Some("DE89 3704 0044 0532 0130 00")
         );
         assert_eq!(s.client_key, "northwind-labs-sl");
-        assert_eq!(s.client.rate, Some(450.5));
+        assert_eq!(s.client.rate, Some(d("450.5")));
         assert_eq!(s.number_prefix, "INV");
         assert!(s.render().is_ok());
 

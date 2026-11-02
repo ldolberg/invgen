@@ -363,13 +363,19 @@ impl App {
     }
 
     fn update_watches(&mut self) {
-        let mut dirs = vec![self.cfg.invoices_dir.clone()];
-        if let Some(parent) = self.path.as_ref().and_then(|p| p.parent()) {
-            dirs.push(parent.to_path_buf());
+        // The library recursively; the open file's folder too when the
+        // recursive watch does not already cover it.
+        let inv_dir = self.cfg.invoices_dir.clone();
+        let canon = std::fs::canonicalize(&inv_dir).unwrap_or_else(|_| inv_dir.clone());
+        let mut dirs = vec![(inv_dir, true)];
+        if let Some(parent) = self.path.as_ref().and_then(|p| p.parent())
+            && !parent.starts_with(&canon)
+        {
+            dirs.push((parent.to_path_buf(), false));
         }
         // The config's folder, to pick up edits made in a text editor.
         if let Some(parent) = self.config_path.parent() {
-            dirs.push(parent.to_path_buf());
+            dirs.push((parent.to_path_buf(), false));
         }
         self.watch.set_dirs(&dirs);
     }
@@ -869,9 +875,13 @@ impl App {
         if !changed.is_empty() {
             let inv_dir = std::fs::canonicalize(&self.cfg.invoices_dir)
                 .unwrap_or_else(|_| self.cfg.invoices_dir.clone());
-            for p in &changed {
-                let p = std::fs::canonicalize(p).unwrap_or_else(|_| p.clone());
-                if p.parent() == Some(inv_dir.as_path()) {
+            for raw in &changed {
+                // A deleted file cannot be canonicalized, so also try the raw
+                // event path against the configured dir.
+                let p = std::fs::canonicalize(raw).unwrap_or_else(|_| raw.clone());
+                if crate::library::affects(&inv_dir, &p)
+                    || crate::library::affects(&self.cfg.invoices_dir, raw)
+                {
                     self.library_due = Some(Instant::now() + Duration::from_millis(250));
                 }
             }

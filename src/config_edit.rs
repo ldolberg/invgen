@@ -16,7 +16,7 @@
 //! caller can offer to open the file in a text editor.
 
 use crate::config::{ClientConfig, Config};
-use crate::model::{Party, Payment};
+use crate::model::{Decimal, Party, Payment, num};
 use serde_yaml_ng::{Mapping, Value};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -25,7 +25,8 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Field {
     Str(String),
-    Num(f64),
+    /// Written as typed: `450`, `7.7`, `450.0` (the scale is kept).
+    Num(Decimal),
     /// Written as a flow sequence on one line: `[a, b, "c, d"]`.
     List(Vec<String>),
 }
@@ -214,7 +215,13 @@ fn opt_str(
     });
 }
 
-fn opt_num(base: &[&str], key: &str, cur: Option<f64>, new: Option<f64>, out: &mut Vec<Edit>) {
+fn opt_num(
+    base: &[&str],
+    key: &str,
+    cur: Option<Decimal>,
+    new: Option<Decimal>,
+    out: &mut Vec<Edit>,
+) {
     if cur == new {
         return;
     }
@@ -415,14 +422,16 @@ fn render(field: &Field) -> Result<String, EditError> {
     match field {
         Field::Str(s) => Ok(scalar(s, false)),
         Field::Num(n) => {
-            if !n.is_finite() {
-                return Err(EditError::Invalid(format!("{n} is not a number")));
-            }
-            Ok(if n.fract() == 0.0 && n.abs() < 1e15 {
-                format!("{}", *n as i64)
-            } else {
-                format!("{n}")
-            })
+            let text = n.to_string();
+            // YAML readers take a number as a float; when that float does not
+            // give the same decimal back, quote it (the config reads numbers
+            // from strings too) so no digit is lost.
+            let exact = text
+                .parse::<f64>()
+                .ok()
+                .and_then(num::from_f64)
+                .is_some_and(|back| back == *n);
+            Ok(if exact { text } else { quote(&text) })
         }
         Field::List(items) => {
             let parts: Vec<String> = items.iter().map(|s| scalar(s, true)).collect();

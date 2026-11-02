@@ -1,6 +1,10 @@
 use super::*;
 use crate::config::DEFAULT_CONFIG;
 
+fn d(s: &str) -> Decimal {
+    s.parse().unwrap()
+}
+
 const EXAMPLE: &str = include_str!("../../examples/config.yaml");
 
 /// Lines of `before` that are not in `after`, and the other way round.
@@ -70,7 +74,7 @@ fn set_scalar_keeps_comment_column_and_other_lines() {
 #[test]
 fn long_value_pushes_the_comment_one_space() {
     let text = "tax_rate: 0  # percent\n";
-    let out = apply(text, &[Edit::set(&["tax_rate"], Field::Num(16.875))]).unwrap();
+    let out = apply(text, &[Edit::set(&["tax_rate"], Field::Num(d("16.875")))]).unwrap();
     assert_eq!(out, "tax_rate: 16.875 # percent\n");
 }
 
@@ -80,7 +84,7 @@ fn set_nested_values_in_example() {
         EXAMPLE,
         &[
             Edit::set(&["from", "email"], Field::Str("alex@example.org".into())),
-            Edit::set(&["clients", "northwind", "rate"], Field::Num(500.0)),
+            Edit::set(&["clients", "northwind", "rate"], Field::Num(d("500"))),
             Edit::set(&["payment", "bic"], Field::Str("DEUTDEFFXXX".into())),
         ],
     )
@@ -96,7 +100,7 @@ fn set_nested_values_in_example() {
         ]
     );
     let c = cfg(&out);
-    assert_eq!(c.clients["northwind"].rate, Some(500.0));
+    assert_eq!(c.clients["northwind"].rate, Some(d("500")));
     assert_eq!(c.from.email.as_deref(), Some("alex@example.org"));
 }
 
@@ -174,8 +178,8 @@ fn insert_new_client_with_all_fields() {
     c.party.tax = vec!["USt-IdNr.: DE123456789".into()];
     c.party.email = Some("ap@example.com".into());
     c.currency = Some("EUR".into());
-    c.tax_rate = Some(19.0);
-    c.rate = Some(95.5);
+    c.tax_rate = Some(d("19"));
+    c.rate = Some(d("95.5"));
     c.unit = Some("hours".into());
     c.description = Some("Consulting: backend".into());
     let out = upsert_client(EXAMPLE, None, "contoso", &c).unwrap();
@@ -190,7 +194,7 @@ fn insert_new_client_with_all_fields() {
     let parsed = cfg(&out);
     let back = &parsed.clients["contoso"];
     assert_eq!(back.party, c.party);
-    assert_eq!(back.rate, Some(95.5));
+    assert_eq!(back.rate, Some(d("95.5")));
     assert_eq!(back.description, c.description);
     // Round trip: writing the same values again changes nothing.
     assert_eq!(
@@ -334,7 +338,7 @@ fn creates_missing_sections() {
 #[test]
 fn new_top_level_scalar_goes_before_the_blocks() {
     let text = "currency: EUR\n\nfrom:\n  name: A\n";
-    let out = apply(text, &[Edit::set(&["due_days"], Field::Num(30.0))]).unwrap();
+    let out = apply(text, &[Edit::set(&["due_days"], Field::Num(d("30")))]).unwrap();
     assert_eq!(out, "currency: EUR\ndue_days: 30\n\nfrom:\n  name: A\n");
 }
 
@@ -344,7 +348,7 @@ fn follows_the_documents_indentation() {
     let out = upsert_client(text, None, "beta", &client("Beta")).unwrap();
     assert_eq!(out, format!("{text}    beta:\n        name: Beta\n"));
     let mut c = client("ACME");
-    c.rate = Some(1.0);
+    c.rate = Some(d("1"));
     let out = upsert_client(text, Some("acme"), "acme", &c).unwrap();
     assert_eq!(out, format!("{text}        rate: 1\n"));
 }
@@ -353,7 +357,7 @@ fn follows_the_documents_indentation() {
 fn crlf_line_endings_are_kept() {
     let text = "currency: EUR\r\nclients:\r\n  acme:\r\n    name: ACME\r\n";
     let mut c = client("ACME");
-    c.rate = Some(10.0);
+    c.rate = Some(d("10"));
     let out = upsert_client(text, Some("acme"), "acme", &c).unwrap();
     assert_eq!(out, format!("{text}    rate: 10\r\n"));
 }
@@ -421,17 +425,32 @@ fn values_are_quoted_when_needed() {
 
 #[test]
 fn numbers_render_compactly() {
+    // Written exactly as the decimal holds it: no float artifacts, and a
+    // typed `450.0` stays `450.0`.
     for (n, want) in [
-        (450.0, "450"),
-        (0.0, "0"),
-        (12.5, "12.5"),
-        (-3.0, "-3"),
-        (0.1, "0.1"),
+        ("450", "450"),
+        ("450.0", "450.0"),
+        ("0", "0"),
+        ("12.5", "12.5"),
+        ("7.7", "7.7"),
+        ("-3", "-3"),
+        ("0.1", "0.1"),
+        ("16.875", "16.875"),
+        // More digits than a float keeps: quoted, so none is lost.
+        ("0.12345678901234567890", "\"0.12345678901234567890\""),
     ] {
-        let out = apply("k: 1\n", &[Edit::set(&["k"], Field::Num(n))]).unwrap();
-        assert_eq!(out, format!("k: {want}\n"));
+        let out = apply("k: 1\n", &[Edit::set(&["k"], Field::Num(d(n)))]).unwrap();
+        assert_eq!(out, format!("k: {want}\n"), "{n}");
     }
-    assert!(apply("k: 1\n", &[Edit::set(&["k"], Field::Num(f64::NAN))]).is_err());
+    // The config reads all of them back to the same value.
+    for n in ["7.7", "0.12345678901234567890", "450.0"] {
+        let out = apply(
+            "tax_rate: 1\n",
+            &[Edit::set(&["tax_rate"], Field::Num(d(n)))],
+        )
+        .unwrap();
+        assert_eq!(cfg(&out).tax_rate, d(n), "{out}");
+    }
 }
 
 #[test]
@@ -550,7 +569,7 @@ fn block_scalar_content_is_not_mistaken_for_keys() {
 fn unknown_keys_are_kept() {
     let text = "clients:\n  acme:\n    name: ACME\n    po_number: 42  # used by my scripts\n";
     let mut c = client("ACME Inc");
-    c.rate = Some(1.0);
+    c.rate = Some(d("1"));
     let out = upsert_client(text, Some("acme"), "acme", &c).unwrap();
     assert_eq!(
         out,
@@ -666,8 +685,8 @@ fn every_single_field_edit_touches_one_line() {
         (&["invoices_dir"], Field::Str("~/Invoices".into())),
         (&["number_prefix"], Field::Str("ACME".into())),
         (&["currency"], Field::Str("USD".into())),
-        (&["tax_rate"], Field::Num(21.0)),
-        (&["due_days"], Field::Num(30.0)),
+        (&["tax_rate"], Field::Num(d("21"))),
+        (&["due_days"], Field::Num(d("30"))),
         (&["from", "name"], Field::Str("Sam Doe".into())),
         (&["from", "address"], Field::List(vec!["Main St 1".into()])),
         (&["from", "email"], Field::Str("sam@example.com".into())),
@@ -677,7 +696,7 @@ fn every_single_field_edit_touches_one_line() {
             Field::Str("GB82 WEST 1234 5698 7654 32".into()),
         ),
         (&["payment", "bic"], Field::Str("WESTGB2L".into())),
-        (&["clients", "CLIENT", "rate"], Field::Num(99.5)),
+        (&["clients", "CLIENT", "rate"], Field::Num(d("99.5"))),
         (
             &["clients", "CLIENT", "description"],
             Field::Str("Audit".into()),
