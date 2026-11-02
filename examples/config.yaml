@@ -6,6 +6,10 @@ number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
 currency: EUR
 tax_rate: 0
 due_days: 14
+language: en                         # en, es, de, fr, it, pt, nl (per client and per invoice too)
+# labels:                            # override single labels, any language
+#   bill_to: Customer
+# template: my-invoice.typ           # custom typst template, see docs/TEMPLATES.md
 
 from:
   name: Alex Morgan
@@ -15,6 +19,7 @@ from:
     - "Tax ID: R.C.S. Luxembourg B000000 Business Permit 00000000/0"
   email: alex@example.com
   phone: "+352 600 000 000"
+  logo: logo.svg                     # relative to this file; SVG or PNG
 
 payment:
   holder: ALEX MORGAN
@@ -28,6 +33,7 @@ clients:
     tax: ["Tax ID: B12345678"]
     currency: EUR
     tax_rate: 0
+    language: es                       # invoices for this client are in Spanish
     rate: 450
     unit: days
     description: Senior Software Engineer

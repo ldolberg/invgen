@@ -55,12 +55,14 @@ impl ClientForm {
                 tax: setup::lines(&self.tax),
                 email: setup::opt(&self.email),
                 phone: setup::opt(&self.phone),
+                logo: None,
             },
             currency: setup::opt(&self.currency).map(|c| c.to_uppercase()),
             tax_rate: setup::number(&self.tax_rate).ok().flatten(),
             rate: setup::number(&self.rate).ok().flatten(),
             unit: setup::opt(&self.unit),
             description: setup::opt(&self.description),
+            language: None,
         }
     }
 }

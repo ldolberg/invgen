@@ -159,14 +159,14 @@ fn insert_missing_key_at_end_of_block() {
 
 #[test]
 fn insert_goes_after_trailing_comments_of_the_block() {
-    // DEFAULT_CONFIG's `from:` ends with a commented `# phone:` line.
+    // DEFAULT_CONFIG's `from:` ends with commented `# phone:` and `# logo:` lines.
     let out = apply(
         DEFAULT_CONFIG,
         &[Edit::set(&["from", "phone"], Field::Str("+00 111".into()))],
     )
     .unwrap();
     assert!(
-        out.contains("  # phone: \"+00 000 000 000\"\n  phone: +00 111\n\npayment:"),
+        out.contains("  # logo: logo.svg                   # SVG or PNG; relative to this file\n  phone: +00 111\n\npayment:"),
         "{out}"
     );
 }

@@ -27,6 +27,10 @@ number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
 currency: EUR                        # default currency code
 tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
+language: en                         # labels: en, es, de, fr, it, pt, nl
+labels:                              # optional: replace single labels
+  bill_to: Customer
+# template: my-invoice.typ           # optional: your own typst template
 
 from:                                # you, printed as the sender
   name: Alex Morgan
@@ -34,6 +38,7 @@ from:                                # you, printed as the sender
   tax: ["VAT ID: LU12345678"]        # any number of tax or registration lines
   email: alex@example.com
   phone: "+352 600 000 000"
+  logo: logo.svg                     # optional: SVG or PNG, relative to this file
 
 payment:                             # printed in the payment box
   holder: ALEX MORGAN
@@ -49,6 +54,7 @@ clients:
     email: billing@example.com
     currency: EUR                    # optional per-client defaults
     tax_rate: 0
+    language: es                     # optional: this client's invoices in Spanish
     rate: 450                        # used by the new-invoice template
     unit: days
     description: Senior Software Engineer
@@ -61,16 +67,22 @@ clients:
 | `currency` | `EUR` | Currency code printed next to amounts. Any text works; invgen does not convert between currencies. |
 | `tax_rate` | `0` | Percent applied to the subtotal. |
 | `due_days` | `14` | Days from the invoice date to the due date. |
-| `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`. |
+| `language` | `en` | Language of every label on the invoice: `en`, `es`, `de`, `fr`, `it`, `pt`, `nl`. An unknown value is an error. Dates and amounts keep their format. |
+| `labels` | none | Map of label key to text, replacing single labels in any language (keys in [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels)). |
+| `template` | built-in | Path of a custom typst template. See [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md). |
+| `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`, `logo` (SVG or PNG shown top-left; a missing file is an error). |
 | `payment` | empty | `holder`, `iban`, `bic`, `notes` (list of lines). |
-| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `rate`, `unit`, `description`. |
+| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `language`, `rate`, `unit`, `description`. |
 
 Unknown keys are ignored, so a typo in a key name does not raise an error. If a
 value does not show up on the invoice, check the spelling first.
 
+Paths (`from.logo`, `template`) may start with `~`; relative paths are resolved
+against the folder of the config file.
+
 ## Precedence
 
-For each invoice, `currency` and `tax_rate` are taken from the first place that
+For each invoice, `currency`, `tax_rate` and `language` are taken from the first place that
 sets them:
 
 1. the invoice front matter,

@@ -486,6 +486,60 @@ fn config_flag_used_by_new() {
     assert_eq!(fs::read_dir(env.invoices()).unwrap().count(), 1);
 }
 
+// ---------------------------------------------------------------- template
+
+#[test]
+fn template_export_to_stdout_and_file() {
+    let env = Env::with_config();
+    let out = env.cmd().args(["template", "--export"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let builtin = stdout_of(&out);
+    assert!(builtin.contains("json(\"/invoice.json\")"), "{builtin}");
+
+    let path = env.path("tpl/my-invoice.typ");
+    env.cmd()
+        .args(["template", "--export"])
+        .arg(&path)
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&path).unwrap(), builtin);
+
+    // Refuses to overwrite without --force.
+    fs::write(&path, "edited").unwrap();
+    env.cmd()
+        .args(["template", "--export"])
+        .arg(&path)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--force"));
+    assert_eq!(fs::read_to_string(&path).unwrap(), "edited");
+    env.cmd()
+        .args(["template", "--export"])
+        .arg(&path)
+        .arg("--force")
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&path).unwrap(), builtin);
+
+    // The exported template builds an invoice when used as a custom template.
+    let md = env.invoice(
+        "custom.md",
+        &INVOICE.replace(
+            "client: northwind\n",
+            &format!("client: northwind\ntemplate: {}\n", path.display()),
+        ),
+    );
+    env.cmd().arg("build").arg(&md).assert().success();
+    assert!(is_pdf(&env.invoices().join("INV-2025-7.pdf")));
+
+    // Without --export the subcommand says what it needs.
+    env.cmd()
+        .arg("template")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--export"));
+}
+
 fn chrono_year() -> i32 {
     use chrono::Datelike;
     chrono::Local::now().year()

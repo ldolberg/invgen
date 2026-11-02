@@ -17,6 +17,10 @@ number_prefix: INV                   # numbers look like INV-<year>-<seq>
 currency: EUR
 tax_rate: 0                          # percent
 due_days: 14
+# language: en                       # labels: en, es, de, fr, it, pt, nl
+# labels:                            # override single labels
+#   bill_to: Customer
+# template: my-invoice.typ           # custom typst template (`invgen template --export`)
 
 from:
   name: Your Name
@@ -24,6 +28,7 @@ from:
   tax: ["VAT ID: XX00000000"]
   email: you@example.com
   # phone: "+00 000 000 000"
+  # logo: logo.svg                   # SVG or PNG; relative to this file
 
 payment:
   holder: YOUR NAME
@@ -38,6 +43,7 @@ clients:
     tax: ["Tax ID: X00000000"]
     # currency: EUR      # optional per-client defaults
     # tax_rate: 0
+    # language: es
     rate: 450            # default rate used by `invgen new`
     unit: days
     description: Consulting services
@@ -55,6 +61,8 @@ pub struct ClientConfig {
     pub rate: Option<Decimal>,
     pub unit: Option<String>,
     pub description: Option<String>,
+    /// Label language for this client's invoices (overrides the config).
+    pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -69,6 +77,18 @@ pub struct Config {
     pub from: Party,
     pub payment: Payment,
     pub clients: BTreeMap<String, ClientConfig>,
+    /// Label language: en, es, de, fr, it, pt or nl.
+    pub language: String,
+    /// Overrides for single labels, e.g. `bill_to: Customer`.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub labels: BTreeMap<String, String>,
+    /// Custom typst template replacing the built-in one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub template: Option<PathBuf>,
+    /// Directory of the loaded config file; relative `from.logo` and
+    /// `template` paths resolve against it. Not part of the file.
+    #[serde(skip)]
+    pub dir: Option<PathBuf>,
 }
 
 impl Default for Config {
@@ -82,6 +102,10 @@ impl Default for Config {
             from: Party::default(),
             payment: Payment::default(),
             clients: BTreeMap::new(),
+            language: "en".into(),
+            labels: BTreeMap::new(),
+            template: None,
+            dir: None,
         }
     }
 }
@@ -108,7 +132,10 @@ impl Config {
         if path.exists() {
             Self::load_from(&path)
         } else {
-            Ok(Config::default())
+            Ok(Config {
+                dir: path.parent().map(Path::to_path_buf),
+                ..Config::default()
+            })
         }
     }
 
@@ -122,7 +149,36 @@ impl Config {
                 .with_context(|| format!("parsing config {}", path.display()))?
         };
         cfg.invoices_dir = expand_tilde(&cfg.invoices_dir);
+        cfg.dir = std::path::absolute(path)
+            .unwrap_or_else(|_| path.to_path_buf())
+            .parent()
+            .map(Path::to_path_buf);
+        cfg.check_languages()
+            .with_context(|| format!("in config {}", path.display()))?;
         Ok(cfg)
+    }
+
+    /// Reject unknown `language` values (global and per client).
+    pub fn check_languages(&self) -> anyhow::Result<()> {
+        crate::render::i18n::normalize_language(&self.language)
+            .map_err(|e| anyhow::anyhow!("`language`: {e}"))?;
+        for (key, client) in &self.clients {
+            if let Some(lang) = &client.language {
+                crate::render::i18n::normalize_language(lang)
+                    .map_err(|e| anyhow::anyhow!("client `{key}`: `language`: {e}"))?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Resolve a user-written path: expand `~`, then make a relative path
+    /// relative to the config file's directory (when known).
+    pub fn resolve_path(&self, path: &Path) -> PathBuf {
+        let p = expand_tilde(path);
+        match &self.dir {
+            Some(dir) if p.is_relative() => dir.join(p),
+            _ => p,
+        }
     }
 
     pub fn save(&self) -> anyhow::Result<()> {
@@ -411,6 +467,50 @@ mod tests {
         let path = dir.path().join("config.yaml");
         std::fs::write(&path, "\n").unwrap();
         assert_eq!(Config::load_from(&path).unwrap().due_days, 14);
+    }
+
+    #[test]
+    fn branding_keys_load_and_resolve() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            "language: de\nlabels:\n  bill_to: Kunde\ntemplate: t.typ\nfrom:\n  name: Me\n  logo: logo.svg\nclients:\n  acme:\n    name: ACME\n    language: fr\n",
+        )
+        .unwrap();
+        let cfg = Config::load_from(&path).unwrap();
+        assert_eq!(cfg.language, "de");
+        assert_eq!(cfg.labels["bill_to"], "Kunde");
+        assert_eq!(cfg.clients["acme"].language.as_deref(), Some("fr"));
+        assert_eq!(cfg.dir.as_deref(), Some(dir.path()));
+        assert_eq!(
+            cfg.resolve_path(cfg.from.logo.as_deref().unwrap()),
+            dir.path().join("logo.svg")
+        );
+        assert_eq!(
+            cfg.resolve_path(Path::new("/abs.typ")),
+            Path::new("/abs.typ")
+        );
+        assert_eq!(cfg.resolve_path(Path::new("~/x")), home().join("x"));
+
+        // Defaults stay out of a saved config.
+        let out = dir.path().join("saved.yaml");
+        Config::default().save_to(&out).unwrap();
+        let text = std::fs::read_to_string(&out).unwrap();
+        assert!(!text.contains("labels") && !text.contains("template") && !text.contains("logo"));
+        assert!(text.contains("language: en"), "{text}");
+    }
+
+    #[test]
+    fn unknown_language_in_config_is_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.yaml");
+        std::fs::write(&path, "language: xx\n").unwrap();
+        let err = format!("{:#}", Config::load_from(&path).unwrap_err());
+        assert!(err.contains("`xx`") && err.contains("en, es, de"), "{err}");
+        std::fs::write(&path, "clients:\n  acme:\n    language: yy\n").unwrap();
+        let err = format!("{:#}", Config::load_from(&path).unwrap_err());
+        assert!(err.contains("acme") && err.contains("`yy`"), "{err}");
     }
 
     #[test]

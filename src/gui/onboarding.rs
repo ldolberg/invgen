@@ -136,6 +136,7 @@ impl Form {
                 tax: setup::lines(&self.tax),
                 email: setup::opt(&self.email),
                 phone: None,
+                logo: None,
             },
             payment: Payment {
                 holder: setup::opt(&self.holder),

@@ -99,6 +99,13 @@ created first with commented placeholders.
 |---|---|
 | `--edit` | Open the file in `$VISUAL`, else `$EDITOR`, else `nano`. When the editor exits, the file is validated and any error is shown as a warning (exit status 1). |
 
+## `invgen template --export [PATH] [--force]`
+
+Writes the built-in typst template to `PATH` (or prints it when `PATH` is left
+out), as a starting point for a custom `template:`. An existing file is only
+replaced with `--force`. The data a template receives is documented in
+[TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md).
+
 ## Exit status
 
 `0` on success, `1` on any error (bad arguments, unreadable files, a parse error,

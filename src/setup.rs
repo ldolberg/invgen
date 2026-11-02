@@ -196,6 +196,7 @@ mod tests {
                 tax: vec!["VAT ID: LU12345678".into()],
                 email: Some("alex@example.com".into()),
                 phone: None,
+                logo: None,
             },
             payment: Payment {
                 holder: Some("ALEX MORGAN".into()),

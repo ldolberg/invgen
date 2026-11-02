@@ -73,6 +73,16 @@ enum Cmd {
         #[arg(long)]
         edit: bool,
     },
+    /// Work with typst templates (see docs/TEMPLATES.md).
+    Template {
+        /// Write the built-in template to PATH (stdout when PATH is omitted),
+        /// as a starting point for a custom `template:`.
+        #[arg(long, value_name = "PATH", num_args = 0..=1, required = true)]
+        export: Option<Option<PathBuf>>,
+        /// Overwrite PATH if it already exists.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -114,6 +124,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             cmd_list(&cfg)
         }
         Some(Cmd::Config { edit }) => cmd_config(config_path.as_deref(), edit),
+        Some(Cmd::Template { export, force }) => cmd_template(export.flatten().as_deref(), force),
     }
 }
 
@@ -446,6 +457,27 @@ fn seq_of(number: &str) -> u64 {
         .next()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
+}
+
+fn cmd_template(path: Option<&Path>, force: bool) -> Result<ExitCode> {
+    let Some(path) = path else {
+        print!("{}", invgen::render::TEMPLATE);
+        return Ok(ExitCode::SUCCESS);
+    };
+    if path.exists() && !force {
+        bail!(
+            "{} already exists (use --force to overwrite)",
+            path.display()
+        );
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(path, invgen::render::TEMPLATE)
+        .with_context(|| format!("writing {}", path.display()))?;
+    println!("{}", path.display());
+    Ok(ExitCode::SUCCESS)
 }
 
 /// Editor for `invgen config --edit` when neither VISUAL nor EDITOR is set.
