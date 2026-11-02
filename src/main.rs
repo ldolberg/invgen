@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Local};
 use clap::{Parser, Subcommand};
-use invgen::config::Config;
+use invgen::config::{Config, DEFAULT_CONFIG};
 use invgen::model::{Invoice, Status, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
@@ -227,17 +227,7 @@ fn cmd_new(
         }
         bail!("unknown client `{key}` (known: {})", known.join(", "));
     }
-    let md = cfg.new_invoice_markdown(client);
-    let number = parse_invoice(&md, cfg)
-        .map(|inv| inv.number)
-        .unwrap_or_else(|_| cfg.next_number(Local::now().year()));
-    std::fs::create_dir_all(&cfg.invoices_dir)
-        .with_context(|| format!("creating {}", cfg.invoices_dir.display()))?;
-    let path = cfg.invoices_dir.join(format!("{}.md", sanitize(&number)));
-    if path.exists() {
-        bail!("{} already exists", path.display());
-    }
-    std::fs::write(&path, md).with_context(|| format!("writing {}", path.display()))?;
+    let path = cfg.write_new_invoice(client)?;
     println!("{}", path.display());
     if open {
         invgen::gui::run(Some(path), config_path)?;
@@ -472,40 +462,6 @@ fn seq_of(number: &str) -> u64 {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
 }
-
-const DEFAULT_CONFIG: &str = r#"# invgen configuration. See docs/FORMAT.md for the invoice format.
-# Static data lives here once; invoice files only say what changes.
-
-invoices_dir: ~/Documents/Invoices   # where `invgen new` writes .md and exports .pdf
-number_prefix: INV                   # numbers look like INV-<year>-<seq>
-currency: EUR
-tax_rate: 0                          # percent
-due_days: 14
-
-from:
-  name: Your Name
-  address: [Street 1, City, "00000", Country]
-  tax: ["VAT ID: XX00000000"]
-  email: you@example.com
-  # phone: "+00 000 000 000"
-
-payment:
-  holder: YOUR NAME
-  iban: XX00 0000 0000 0000 0000 00
-  bic: XXXXXXXXXXX
-  # notes: ["Bank name", "Please quote the invoice number"]
-
-clients:
-  acme:
-    name: ACME Corp
-    address: [Street 1, City, "00000", Country]
-    tax: ["Tax ID: X00000000"]
-    # currency: EUR      # optional per-client defaults
-    # tax_rate: 0
-    rate: 450            # default rate used by `invgen new`
-    unit: days
-    description: Consulting services
-"#;
 
 fn cmd_config(config_path: Option<&Path>, edit: bool) -> Result<ExitCode> {
     let path = config_path
