@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Local};
 use clap::{Parser, Subcommand};
 use invgen::config::Config;
-use invgen::model::{Invoice, Status, format_money};
+use invgen::model::{Decimal, Invoice, Status, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
 use std::collections::BTreeMap;
@@ -347,13 +347,14 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
         (seq_of(&a.number), a.date, &a.number).cmp(&(seq_of(&b.number), b.date, &b.number))
     });
     // year -> currency -> sum
-    let mut per_year: BTreeMap<i32, BTreeMap<String, f64>> = BTreeMap::new();
+    let mut per_year: BTreeMap<i32, BTreeMap<String, Decimal>> = BTreeMap::new();
     for inv in &rows {
-        *per_year
+        let sum = per_year
             .entry(inv.date.year())
             .or_default()
             .entry(inv.currency.clone())
-            .or_default() += inv.total();
+            .or_default();
+        *sum = sum.saturating_add(inv.total());
     }
 
     let w_num = rows
@@ -428,7 +429,7 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
 fn print_year_total(
     st: &Style,
     year: i32,
-    per_year: &BTreeMap<i32, BTreeMap<String, f64>>,
+    per_year: &BTreeMap<i32, BTreeMap<String, Decimal>>,
     w_num: usize,
     w_client: usize,
     w_total: usize,
