@@ -29,6 +29,10 @@ tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
 # tax_note: exempt                   # optional: legal tax mention under the totals
 language: en                         # labels: en, es, de, fr, it, pt, nl
+# locale: de-CH                      # optional: number and date format (default: language)
+# date_format: "%d.%m.%Y"            # optional: strftime pattern for dates
+# number_format:                     # optional: override single parts of the locale
+#   thousands: "'"
 labels:                              # optional: replace single labels
   bill_to: Customer
 # template: my-invoice.typ           # optional: your own typst template
@@ -57,6 +61,7 @@ clients:
     tax_rate: 0
     tax_note: reverse_charge         # optional: EU B2B services without VAT
     language: es                     # optional: this client's invoices in Spanish
+    # locale: es-MX                  # optional: also number_format, date_format
     rate: 450                        # used by the new-invoice template
     unit: days
     description: Senior Software Engineer
@@ -70,12 +75,15 @@ clients:
 | `tax_rate` | `0` | Percent applied to the subtotal. Single lines can use another rate (a `Tax` column or `, tax 10%`), see [FORMAT.md](https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#body-rules). |
 | `tax_note` | none | Legal tax mention printed under the totals: `reverse_charge`, `exempt`, `outside_scope` (translated into the invoice language) or any free text. See [Tax notes](#tax-notes). |
 | `due_days` | `14` | Days from the invoice date to the due date. |
-| `language` | `en` | Language of every label on the invoice: `en`, `es`, `de`, `fr`, `it`, `pt`, `nl`. An unknown value is an error. Dates and amounts keep their format. |
+| `language` | `en` | Language of every label on the invoice: `en`, `es`, `de`, `fr`, `it`, `pt`, `nl`. An unknown value is an error. Also sets how dates and amounts are written on the PDF unless `locale` is set. |
+| `locale` | `language` | Number and date conventions on the PDF: a language with an optional region, e.g. `de`, `de-CH`, `en-US`, `pt-BR`. Labels still follow `language`. See below. |
+| `number_format` | locale | `thousands`, `decimal` (separators), `currency` (`symbol` or `code`), `currency_position` (`before` or `after`). Each key is optional and overrides the locale. |
+| `date_format` | locale | strftime pattern for dates on the PDF, e.g. `"%d.%m.%Y"`. Month and weekday names (`%B`, `%b`, `%A`, `%a`) are translated. |
 | `labels` | none | Map of label key to text, replacing single labels in any language (keys in [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels)). |
 | `template` | built-in | Path of a custom typst template. See [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md). |
 | `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`, `logo` (SVG or PNG shown top-left; a missing file is an error). |
 | `payment` | empty | `holder`, `iban`, `bic`, `notes` (list of lines). |
-| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `tax_note`, `language`, `rate`, `unit`, `description`. |
+| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `tax_note`, `language`, `locale`, `number_format`, `date_format`, `rate`, `unit`, `description`. |
 
 Unknown keys are ignored, so a typo in a key name does not raise an error. If a
 value does not show up on the invoice, check the spelling first.
@@ -85,8 +93,8 @@ against the folder of the config file.
 
 ## Precedence
 
-For each invoice, `currency`, `tax_rate`, `tax_note` and `language` are taken from the first place that
-sets them:
+For each invoice, `currency`, `tax_rate`, `tax_note`, `language`, `locale` and `date_format` are
+taken from the first place that sets them (`number_format` merges key by key in the same order):
 
 1. the invoice front matter,
 2. the client entry,
@@ -118,6 +126,42 @@ what your jurisdiction requires.
 `invgen build` prints a warning (and the editor shows a notice after export) when an
 invoice charges no tax, has no `tax_note` and the client has `tax` lines. That is the
 typical cross-border B2B case that needs the reverse charge mention.
+
+## Number and date formatting
+
+Amounts and dates on the PDF follow the invoice language by default:
+
+| `language` | Amount | Date |
+|---|---|---|
+| `en` | `EUR 9,450.00` | `November 2, 2026` |
+| `de` | `9.450,00 €` | `2. November 2026` |
+| `es` | `9.450,00 €` | `2 de noviembre de 2026` |
+| `fr` | `9 450,00 €` | `2 novembre 2026` |
+| `it` | `9.450,00 €` | `2 novembre 2026` |
+| `pt` | `9 450,00 €` | `2 de novembro de 2026` |
+| `nl` | `€ 9.450,00` | `2 november 2026` |
+
+Quantities and the tax rate use the same decimal separator (`7,5`, `21 %`). A
+`locale` with a region picks regional conventions: `de-CH` writes `CHF 9’450.00`,
+`en-US` writes `$9,450.00`, `en-GB` writes `2 November 2026`, `pt-BR` writes
+`R$ 9.450,00`. Common currency codes become symbols (€, $, £, ¥, ...); `CHF` and
+unknown codes stay as written.
+
+For anything else, override single parts:
+
+```yaml
+locale: de-CH
+number_format:
+  thousands: "'"            # "" for none
+  decimal: "."
+  currency: code            # symbol or code
+  currency_position: before # before or after
+date_format: "%d.%m.%Y"
+```
+
+The command line (`invgen build`, `invgen list`) always prints `EUR 9,450.00`, whatever
+the locale. The full list of regions and date specifiers is in
+[docs/FORMAT.md](https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#number-and-date-formatting).
 
 ## Invoice numbers
 

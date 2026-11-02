@@ -18,6 +18,10 @@ tax_label: VAT                # optional: defaults to the translated "VAT" label
 tax_note: reverse_charge      # optional: legal mention under the totals (presets or free text)
 accent: "#111827"             # optional
 language: en                  # optional: en, es, de, fr, it, pt, nl
+locale: de-CH                 # optional: number and date format, default follows language
+date_format: "%d.%m.%Y"       # optional: strftime pattern for dates on the PDF
+number_format:                # optional: override single parts of the locale
+  thousands: "'"
 template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
 ---
 
@@ -132,8 +136,12 @@ about 7.9e28 is an error.
 * `language`: front matter, then the client, then the config, default `en`. Supported:
   `en`, `es`, `de`, `fr`, `it`, `pt`, `nl` (case-insensitive; a region suffix such as
   `fr-BE` is accepted and ignored). Any other value is an error listing these. The
-  language changes every label on the invoice (headings, column names, status);
-  dates and amounts keep their format.
+  language changes every label on the invoice (headings, column names, status)
+  and, unless `locale` says otherwise, how dates and amounts are written on the PDF
+  (see [Number and date formatting](#number-and-date-formatting)).
+* `locale`, `number_format`, `date_format`: front matter, then the client, then the
+  config. `number_format` merges field by field (a client `decimal` and a config
+  `thousands` both apply).
 * `template`: front matter, then the config; none means the built-in template.
 * `tax_note`: front matter, then the client, then the config. A legal mention printed
   under the totals. Presets are translated into the invoice language:
@@ -163,6 +171,71 @@ about 7.9e28 is an error.
   to English. Use `config: labels:` in the front matter to change one invoice only.
 * **Templates**: see [TEMPLATES.md](TEMPLATES.md) for writing your own and the data
   it receives. `invgen template --export FILE.typ` writes the built-in one.
+
+## Number and date formatting
+
+Amounts, quantities, percentages and dates on the PDF follow the invoice
+`language`. The invoice markdown itself is always written the same way (the body
+rules above), and the CLI (`invgen build`, `invgen list`) always prints
+`EUR 9,450.00`.
+
+| `language` | Amount          | Date                     | Quantity, rate |
+|------------|-----------------|--------------------------|----------------|
+| `en`       | `EUR 9,450.00`  | `November 2, 2026`       | `7.5`, `21%`   |
+| `de`       | `9.450,00 €`    | `2. November 2026`       | `7,5`, `21 %`  |
+| `es`       | `9.450,00 €`    | `2 de noviembre de 2026` | `7,5`, `21 %`  |
+| `fr`       | `9 450,00 €`    | `2 novembre 2026`        | `7,5`, `21 %`  |
+| `it`       | `9.450,00 €`    | `2 novembre 2026`        | `7,5`, `21%`   |
+| `pt`       | `9 450,00 €`    | `2 de novembro de 2026`  | `7,5`, `21%`   |
+| `nl`       | `€ 9.450,00`    | `2 november 2026`        | `7,5`, `21%`   |
+
+The spaces inside amounts are no-break spaces (French thousands use the narrow
+no-break space U+202F), so an amount never wraps. Month and weekday names come from
+built-in tables, never from the system locale. Quantities keep at most two decimals
+and no thousands separator.
+
+* **`locale`**: a language code with an optional region, written `de-CH`, `de_CH` or
+  `de-ch`. It changes only numbers and dates (labels follow `language`), so an English
+  invoice can use Swiss formatting. The language part must be one of the supported
+  languages; an unknown region uses that language's defaults. Regions with their own
+  conventions:
+
+  | `locale`                     | Amount                              | Date               |
+  |------------------------------|-------------------------------------|--------------------|
+  | `en-US`, `en-CA`, `en-PH`    | `$9,450.00`, `€9,450.00`, `CHF 9,450.00` | `November 2, 2026` |
+  | `en-GB`, `en-IE`, `en-AU`, `en-NZ`, `en-MT` | `£9,450.00`          | `2 November 2026`  |
+  | `de-CH`, `de-LI`, `it-CH`    | `CHF 9’450.00`                      | `2. November 2026` |
+  | `de-AT`                      | `€ 9 450,00`                        | `2. Jänner 2026`   |
+  | `es-MX`, `es-US` (and other dollar countries) | `$9,450.00`        | `2 de noviembre de 2026` |
+  | `fr-CA`                      | `9 450,00 $`                        | `2 novembre 2026`  |
+  | `pt-BR`                      | `R$ 9.450,00`                       | `2 de novembro de 2026` |
+  | `nl-BE`                      | `9.450,00 €`                        | `2 november 2026`  |
+
+* **Currency symbols**: common ISO codes are written as their symbol (`EUR` €, `USD` $,
+  `GBP` £, `JPY` ¥, `CNY` CN¥, `INR` ₹, `BRL` R$, `CAD` CA$, `AUD` A$, `PLN` zł,
+  `SEK`/`NOK`/`DKK` kr, ...). `CHF` and any other code stay as written. A region uses
+  `$` for its own dollar (`CAD` in `en-CA`) and `US$` for the US dollar there. A
+  symbol before the amount touches it in English (`$9,450.00`) unless it ends in a
+  letter (`CHF 9,450.00`); other locales put a space.
+* **`number_format`** overrides single parts of the locale:
+
+  ```yaml
+  number_format:
+    thousands: "'"            # thousands separator; "" for none
+    decimal: "."              # decimal separator
+    currency: symbol          # symbol (€) or code (EUR)
+    currency_position: before # before or after the amount
+  ```
+
+  An unknown key, an empty decimal separator, a separator with digits or signs, or the
+  same separator for thousands and decimals is an error at the `number_format:` line.
+* **`date_format`**: a strftime pattern used for the invoice and due dates, e.g.
+  `"%d.%m.%Y"` (`02.11.2026`), `"%Y-%m-%d"`, `"%-d %b %Y"` (`2 Nov 2026`) or
+  `"%A, %-d. %B %Y"` (`Montag, 2. November 2026`). `%B`/`%b` (month) and `%A`/`%a`
+  (weekday) are translated into the locale's language; `%d`, `%-d`, `%e`, `%m`, `%-m`,
+  `%Y`, `%y` and the other chrono date specifiers work as usual, and `%%` is a literal
+  `%`. Time specifiers (`%H`...) and unknown ones are an error. Quote the pattern in
+  YAML (it starts with `%`).
 
 ## Front matter overrides
 
@@ -212,6 +285,10 @@ tax_rate: 0
 due_days: 14
 tax_note: exempt                     # optional: default legal tax mention
 language: en                         # optional: en, es, de, fr, it, pt, nl
+locale: en-GB                        # optional: number and date format (default: language)
+date_format: "%-d %B %Y"             # optional: strftime pattern for dates on the PDF
+number_format:                       # optional: thousands, decimal, currency, currency_position
+  currency: symbol
 labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
@@ -235,6 +312,7 @@ clients:
     tax_rate: 0
     tax_note: reverse_charge   # optional: EU B2B services without VAT
     language: es       # optional: invoices for this client in Spanish
+    locale: es-MX      # optional: also number_format, date_format per client
     rate: 450          # default rate used by templates
     unit: days
     description: Senior Software Engineer

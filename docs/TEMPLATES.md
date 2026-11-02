@@ -72,21 +72,22 @@ bump. A template can guard against a future breaking change with:
 |-------|------|-------------|
 | `contract_version` | integer | Version of this contract (`1`). |
 | `language` | string | Label language code: `en`, `es`, `de`, `fr`, `it`, `pt` or `nl`. |
+| `locale` | string | Formatting locale of the amounts and dates, e.g. `en`, `de` or `de-CH` (the `locale:` key, else `language`). |
 | `labels` | dict | Translated labels for `language`, with the config `labels:` overrides applied (see below). |
 | `logo` | string or none | Virtual path of the sender's logo, for `image(d.logo)`. |
 | `number` | string | Invoice number, e.g. `EINV-2026-23`. |
 | `status` | string | `pending`, `paid`, `overdue` or `draft` (stable keys, not translated). |
 | `status_label` | string | The status in `language`, e.g. `Pagada`. |
-| `date` | string | Invoice date, formatted, e.g. `November 1, 2026`. |
+| `date` | string | Invoice date, formatted for `locale`, e.g. `November 1, 2026` or `1. November 2026`. |
 | `due` | string or none | Due date, formatted; none when hidden. |
 | `currency` | string | ISO code, e.g. `EUR`. |
 | `accent` | string | Accent color as `#rrggbb` (always valid, for `rgb(d.accent)`). |
 | `from`, `to` | party | Sender and recipient (see below). |
 | `payment` | dict | `holder`, `iban`, `bic` (string or none) and `notes` (list of strings). |
 | `items` | list of items | Line items (see below). |
-| `subtotal` | string | Formatted money, e.g. `EUR 9,450.00`. |
+| `subtotal` | string | Formatted money, e.g. `EUR 9,450.00` or `9.450,00 €`. |
 | `tax_label` | string | Tax row label (front matter `tax_label`, else the translated `tax` label). |
-| `tax_rate` | string | Tax rate with percent sign, e.g. `21%`. When every line uses the same rate, that rate (even if it differs from the invoice default); with several rates, the invoice default. |
+| `tax_rate` | string | Tax rate with percent sign, e.g. `21%` or `7,5 %`. When every line uses the same rate, that rate (even if it differs from the invoice default); with several rates, the invoice default. |
 | `tax` | string | Formatted tax amount (the sum of the per-rate taxes). |
 | `tax_breakdown` | list of tax groups | One entry per distinct tax rate, highest rate first; empty when there are no items. More than one entry means the invoice mixes rates (see below). |
 | `tax_note` | string or none | Legal tax mention to print near the totals: a `tax_note` preset already translated into `language` (from the `tax_note_*` labels), or the user's free text. |
@@ -108,6 +109,11 @@ line totals at that rate) and `tax` (formatted money). The bases add up to
 `tax_label (tax_rate)` row when `tax_breakdown` has at most one entry, and one
 row per group otherwise. These fields were added without a version bump; a
 template that ignores them keeps working and shows the combined `tax`.
+
+All formatted strings follow `locale` (see the number and date formatting section
+of [FORMAT.md](FORMAT.md#number-and-date-formatting)): `7,5`, `450,00`,
+`9.450,00 €`. Amounts may contain no-break spaces (U+00A0, U+202F). The shape of
+the data does not change with the locale, so a template needs no changes.
 
 ### Labels
 
