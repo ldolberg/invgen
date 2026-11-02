@@ -448,10 +448,18 @@ enum Block {
 type Events<'a> =
     std::iter::Peekable<pulldown_cmark::OffsetIter<'a, pulldown_cmark::DefaultBrokenLinkCallback>>;
 
+/// Lists nested deeper than this are rejected: list parsing recurses per level,
+/// and pathological input (thousands of `- - - ...`) would overflow the stack.
+const MAX_LIST_DEPTH: usize = 64;
+
 struct BodyParser<'a, 'l> {
     events: Events<'a>,
     base: usize,
     lines: &'l LineIndex,
+    /// Current list nesting level.
+    depth: usize,
+    /// Line of the first list nested deeper than `MAX_LIST_DEPTH`.
+    too_deep: Option<usize>,
 }
 
 impl BodyParser<'_, '_> {
@@ -459,7 +467,7 @@ impl BodyParser<'_, '_> {
         self.lines.line_of(self.base + range.start)
     }
 
-    fn blocks(mut self) -> Vec<Block> {
+    fn blocks(mut self) -> Result<Vec<Block>> {
         let mut out = Vec::new();
         while let Some((event, range)) = self.events.next() {
             let block = match event {
@@ -470,7 +478,7 @@ impl BodyParser<'_, '_> {
                     Block::Paragraph(self.inline_text(TagEnd::Paragraph))
                 }
                 Event::Start(Tag::Table(_)) => self.table(self.line(&range)),
-                Event::Start(Tag::List(_)) => Block::List(self.list()),
+                Event::Start(Tag::List(_)) => Block::List(self.list(self.line(&range))),
                 Event::Start(_) => {
                     self.skip_to_end();
                     Block::Other
@@ -481,7 +489,13 @@ impl BodyParser<'_, '_> {
             };
             out.push(block);
         }
-        out
+        match self.too_deep {
+            Some(line) => Err(ParseError::new(
+                line,
+                format!("lists are nested more than {MAX_LIST_DEPTH} levels deep"),
+            )),
+            None => Ok(out),
+        }
     }
 
     /// Consume events up to and including the end of the current element.
@@ -548,8 +562,20 @@ impl BodyParser<'_, '_> {
         cells
     }
 
-    /// Called right after `Start(List)`; consumes through the matching end.
-    fn list(&mut self) -> Vec<ListEntry> {
+    /// Called right after `Start(List)` (at `line`); consumes through the matching end.
+    fn list(&mut self, line: usize) -> Vec<ListEntry> {
+        if self.depth >= MAX_LIST_DEPTH {
+            self.too_deep.get_or_insert(line);
+            self.skip_to_end();
+            return Vec::new();
+        }
+        self.depth += 1;
+        let entries = self.list_entries();
+        self.depth -= 1;
+        entries
+    }
+
+    fn list_entries(&mut self) -> Vec<ListEntry> {
         let mut entries = Vec::new();
         while let Some((event, range)) = self.events.next() {
             match event {
@@ -567,14 +593,14 @@ impl BodyParser<'_, '_> {
     fn item(&mut self, line: usize) -> ListEntry {
         let mut text = String::new();
         let mut children = Vec::new();
-        while let Some((event, _)) = self.events.next() {
+        while let Some((event, range)) = self.events.next() {
             match event {
                 Event::End(TagEnd::Item) => break,
                 Event::Text(t) | Event::Code(t) => text.push_str(&t),
                 Event::SoftBreak | Event::HardBreak => text.push('\n'),
                 Event::End(TagEnd::Paragraph) => text.push('\n'),
                 Event::Start(Tag::List(_)) => children.extend(
-                    self.list()
+                    self.list(self.line(&range))
                         .into_iter()
                         .map(|e| join_lines(&e.text))
                         .filter(|t| !t.is_empty()),
@@ -617,8 +643,10 @@ fn parse_body(body: &str, base: usize, lines: &LineIndex) -> Result<Body> {
         events: Parser::new_ext(body, opts).into_offset_iter().peekable(),
         base,
         lines,
+        depth: 0,
+        too_deep: None,
     };
-    let blocks = parser.blocks();
+    let blocks = parser.blocks()?;
     let has_table = blocks.iter().any(|b| matches!(b, Block::Table { .. }));
 
     let mut out = Body::default();
@@ -971,6 +999,24 @@ mod tests {
         // a horizontal rule followed by prose is still fine
         let ok = "---\nclient: northwind\n---\n\n---\n\nThanks for your business.\n\n- A: 1 @ 1\n";
         assert!(parse(ok).is_ok());
+    }
+
+    /// Found by fuzzing: thousands of nested list markers overflowed the stack.
+    #[test]
+    fn deeply_nested_lists_are_an_error_not_a_stack_overflow() {
+        let src = format!("---\n---\n- A: 1 @ 1\n\n{}B: 1 @ 1\n", "- ".repeat(5000));
+        let err = parse(&src).unwrap_err();
+        assert_eq!(err.line, 5);
+        assert!(err.message.contains("nested"), "{}", err.message);
+
+        let src: String = (0..3000)
+            .map(|i| format!("{}- A: 1 @ 1\n", "  ".repeat(i)))
+            .collect();
+        assert_eq!(parse(&src).unwrap_err().line, 65);
+
+        // a few levels are fine
+        let ok = "- A: 1 @ 1\n  - detail\n    - more\n      - and more\n";
+        assert_eq!(parse(ok).unwrap().items.len(), 1);
     }
 
     #[test]

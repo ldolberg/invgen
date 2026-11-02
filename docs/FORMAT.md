@@ -46,6 +46,7 @@ Any other paragraph becomes a note under the table.
   item's continuation lines (indented text under it) and/or its nested list entries
   (joined with `; `). Lists whose first entry is not item-shaped, and lists under a
   `Notes` heading, become notes (one note per entry).
+  Lists may nest at most 64 levels deep; deeper nesting is an error.
 * **Headings** are ignored for data (they are for you), except a heading named
   `Notes` whose following paragraphs and lists become notes (until the next heading).
 * **Lead paragraph**: a paragraph directly after a (non-`Notes`) heading and before the
