@@ -1,5 +1,7 @@
 # invgen
 
+[![CI](https://github.com/ldolberg/invgen/actions/workflows/ci.yml/badge.svg)](https://github.com/ldolberg/invgen/actions/workflows/ci.yml)
+
 Write invoices in markdown, get clean PDFs. A native desktop editor shows a live
 preview as you type; a small CLI builds, watches and lists invoices from the
 terminal. Your details, bank and clients live once in a config file, so each
@@ -8,6 +10,9 @@ invoice is a few lines.
 ![invgen editor](docs/screenshot.png)
 
 <img src="docs/sample-invoice.png" width="420" alt="Sample invoice PDF">
+
+**[User guide](https://ldolberg.github.io/invgen/guide/)** (install, config, format,
+CLI, editor, recipes, FAQ) | [Contributing](CONTRIBUTING.md)
 
 ## Install
 
@@ -90,7 +95,7 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen new [--client KEY] [--open]` | Create the next numbered invoice |
 | `invgen build FILE.md [-o OUT.pdf] [--png DIR]` | Render a PDF (and optional PNG previews) |
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
-| `invgen list` | Table of all invoices with yearly totals |
+| `invgen list` | Table of all invoices (including subfolders) with yearly totals; pending invoices past due show as `overdue Nd` |
 | `invgen config [--edit]` | Show (or edit) the config file |
 
 Every command accepts `--config PATH` (or `INVGEN_CONFIG=PATH`) to use another config.
@@ -146,6 +151,7 @@ Windows zips and the Flatpak (smoke testing each binary on its own OS), publishe
 the signed Flatpak repo to GitHub Pages, creates the GitHub release and publishes
 the crate to crates.io (secret `CARGO_REGISTRY_TOKEN`). Running it by hand from the
 Actions tab is a dry run.
+Build, test and coding rules: [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 

@@ -4,7 +4,7 @@ use anyhow::{Context, Result, bail};
 use chrono::{Datelike, Local};
 use clap::{Parser, Subcommand};
 use invgen::config::Config;
-use invgen::model::{Invoice, Status, format_money};
+use invgen::model::{Decimal, Invoice, Status, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
 use std::collections::BTreeMap;
@@ -303,22 +303,6 @@ fn cmd_watch(config_path: Option<&Path>, file: &Path, output: Option<&Path>) -> 
     Ok(ExitCode::SUCCESS)
 }
 
-fn collect_markdown(dir: &Path, depth: u32, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth > 0 {
-                collect_markdown(&path, depth - 1, out);
-            }
-        } else if path.extension().is_some_and(|e| e == "md") {
-            out.push(path);
-        }
-    }
-}
-
 fn cmd_list(cfg: &Config) -> Result<ExitCode> {
     let st = Style::stdout();
     let dir = &cfg.invoices_dir;
@@ -328,8 +312,8 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
             dir.display()
         );
     }
-    let mut files = Vec::new();
-    collect_markdown(dir, 2, &mut files);
+    let files = invgen::library::discover(dir);
+    let today = Local::now().date_naive();
     let mut rows = Vec::new();
     let mut failed = false;
     for f in &files {
@@ -363,13 +347,14 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
         (seq_of(&a.number), a.date, &a.number).cmp(&(seq_of(&b.number), b.date, &b.number))
     });
     // year -> currency -> sum
-    let mut per_year: BTreeMap<i32, BTreeMap<String, f64>> = BTreeMap::new();
+    let mut per_year: BTreeMap<i32, BTreeMap<String, Decimal>> = BTreeMap::new();
     for inv in &rows {
-        *per_year
+        let sum = per_year
             .entry(inv.date.year())
             .or_default()
             .entry(inv.currency.clone())
-            .or_default() += inv.total();
+            .or_default();
+        *sum = sum.saturating_add(inv.total());
     }
 
     let w_num = rows
@@ -415,8 +400,8 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
         }
         last_year = Some(year);
         let client: String = inv.to.name.chars().take(w_client).collect();
-        let status = format!("{:<7}", inv.status.label());
-        let status = match inv.status {
+        let status = inv.status_display(today);
+        let status = match inv.effective_status(today) {
             Status::Paid => st.green(&status),
             Status::Overdue => st.red_bold(&status),
             Status::Draft => st.dim(&status),
@@ -444,7 +429,7 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
 fn print_year_total(
     st: &Style,
     year: i32,
-    per_year: &BTreeMap<i32, BTreeMap<String, f64>>,
+    per_year: &BTreeMap<i32, BTreeMap<String, Decimal>>,
     w_num: usize,
     w_client: usize,
     w_total: usize,

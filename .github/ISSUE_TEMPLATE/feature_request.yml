@@ -1,0 +1,42 @@
+name: Feature request
+description: Suggest a new feature or an improvement.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [user guide](https://ldolberg.github.io/invgen/guide/) and the
+        [open issues](https://github.com/ldolberg/invgen/issues) first; it may
+        already exist or be planned. Use fictional data in examples.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what makes it hard today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: How should it work? For format changes, show the markdown or config you would like to write.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds you use now, or other designs you considered.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Invoice format
+        - Config
+        - CLI
+        - Editor
+        - PDF output
+        - Packaging
+        - Documentation

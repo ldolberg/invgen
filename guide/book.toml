@@ -1,0 +1,17 @@
+[book]
+title = "invgen user guide"
+description = "Write invoices in markdown, get clean PDFs."
+authors = ["invgen contributors"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+create-missing = false
+
+[output.html]
+# Published under https://ldolberg.github.io/invgen/guide/ (the site root hosts
+# the Flatpak repo), so absolute links such as the 404 page need this prefix.
+site-url = "/invgen/guide/"
+git-repository-url = "https://github.com/ldolberg/invgen"
+edit-url-template = "https://github.com/ldolberg/invgen/edit/main/guide/{path}"

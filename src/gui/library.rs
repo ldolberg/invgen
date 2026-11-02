@@ -3,6 +3,7 @@
 use crate::config::Config;
 use crate::model::{Status, format_money};
 use crate::parse::parse_invoice;
+use chrono::NaiveDate;
 use eframe::egui;
 use notify::{RecommendedWatcher, RecursiveMode, Watcher};
 use std::collections::HashSet;
@@ -16,20 +17,17 @@ pub struct Entry {
     pub number: String,
     pub client: String,
     pub total: String,
+    /// Effective status (pending past due shows as overdue).
     pub status: Option<Status>,
+    pub days_overdue: Option<i64>,
     pub date: Option<chrono::NaiveDate>,
 }
 
-pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
+/// Library entries for every invoice [`crate::library::discover`] finds in
+/// `dir`, newest first. Status is the effective one as of `today`.
+pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
     let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else {
-        return out;
-    };
-    for e in rd.flatten() {
-        let path = e.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("md") {
-            continue;
-        }
+    for path in crate::library::discover(dir) {
         let stem = path
             .file_stem()
             .map(|s| s.to_string_lossy().into_owned())
@@ -45,7 +43,8 @@ pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
                 number: inv.number.clone(),
                 client: inv.to.name.clone(),
                 total: format_money(&inv.currency, inv.total()),
-                status: Some(inv.status),
+                status: Some(inv.effective_status(today)),
+                days_overdue: inv.days_overdue(today),
                 date: Some(inv.date),
             },
             _ => Entry {
@@ -54,6 +53,7 @@ pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
                 client: "could not parse".into(),
                 total: String::new(),
                 status: None,
+                days_overdue: None,
                 date: None,
             },
         };
@@ -94,7 +94,8 @@ impl Scanner {
                     while let Ok(d) = job_rx.try_recv() {
                         dir = d;
                     }
-                    if out_tx.send(scan(&dir, &cfg)).is_err() {
+                    let today = chrono::Local::now().date_naive();
+                    if out_tx.send(scan(&dir, &cfg, today)).is_err() {
                         return;
                     }
                     ctx.request_repaint();
@@ -113,11 +114,11 @@ impl Scanner {
     }
 }
 
-/// Watches directories (non-recursively) and reports changed paths.
+/// Watches directories (each recursively or not) and reports changed paths.
 pub struct FsWatch {
     watcher: Option<RecommendedWatcher>,
     rx: Receiver<PathBuf>,
-    watched: HashSet<PathBuf>,
+    watched: HashSet<(PathBuf, bool)>,
 }
 
 impl FsWatch {
@@ -142,22 +143,87 @@ impl FsWatch {
         }
     }
 
-    /// Make sure exactly `dirs` are watched.
-    pub fn set_dirs(&mut self, dirs: &[PathBuf]) {
+    /// Make sure exactly `dirs` are watched; `true` watches recursively.
+    /// A path listed both ways is watched recursively.
+    pub fn set_dirs(&mut self, dirs: &[(PathBuf, bool)]) {
         let Some(w) = self.watcher.as_mut() else {
             return;
         };
-        let want: HashSet<PathBuf> = dirs.iter().filter(|d| d.is_dir()).cloned().collect();
-        for old in self.watched.difference(&want) {
+        let mut want: HashSet<(PathBuf, bool)> = HashSet::new();
+        for (d, recursive) in dirs.iter().filter(|(d, _)| d.is_dir()) {
+            let recursive = *recursive || dirs.iter().any(|(o, r)| *r && o == d);
+            want.insert((d.clone(), recursive));
+        }
+        if want == self.watched {
+            return;
+        }
+        // Rare (only when the open file or the invoices dir changes), so start
+        // over instead of diffing: overlapping watches share OS handles and
+        // removing one could silently drop another.
+        for (old, _) in &self.watched {
             let _ = w.unwatch(old);
         }
-        for new in want.difference(&self.watched) {
-            let _ = w.watch(new, RecursiveMode::NonRecursive);
+        for (new, recursive) in &want {
+            let mode = if *recursive {
+                RecursiveMode::Recursive
+            } else {
+                RecursiveMode::NonRecursive
+            };
+            let _ = w.watch(new, mode);
         }
         self.watched = want;
     }
 
     pub fn poll(&self) -> Vec<PathBuf> {
         self.rx.try_iter().collect()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Write a minimal invoice numbered after the file stem.
+    fn write(root: &Path, rel: &str, due: &str, status: &str) {
+        let p = root.join(rel);
+        let number = p.file_stem().unwrap().to_string_lossy().into_owned();
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        let md = format!(
+            "---\nnumber: {number}\ndate: 2026-10-01\ndue: {due}\nstatus: {status}\n\
+             to:\n  name: Northwind Labs\n---\n\n\
+             | Description | Qty | Unit | Rate |\n|---|---|---|---|\n| Consulting | 1 | days | 100 |\n"
+        );
+        std::fs::write(p, md).unwrap();
+    }
+
+    #[test]
+    fn scan_includes_subfolders_and_effective_status() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        write(root, "EINV-2026-01.md", "2026-10-21", "pending");
+        write(root, "2026/EINV-2026-02.md", "2026-12-01", "pending");
+        write(root, "a/b/EINV-2026-03.md", "2026-10-01", "paid");
+        write(root, "a/b/EINV-2026-04.md", "false", "pending");
+        write(root, "a/b/c/EINV-2026-05.md", "2026-10-01", "paid");
+        let cfg = Config {
+            invoices_dir: root.to_path_buf(),
+            ..Config::default()
+        };
+        let today = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
+        let entries = scan(root, &cfg, today);
+        let got: Vec<_> = entries
+            .iter()
+            .map(|e| (e.number.as_str(), e.status, e.days_overdue))
+            .collect();
+        // Newest first; too-deep folders are not part of the library.
+        assert_eq!(
+            got,
+            [
+                ("EINV-2026-04", Some(Status::Pending), None),
+                ("EINV-2026-03", Some(Status::Paid), None),
+                ("EINV-2026-02", Some(Status::Pending), None),
+                ("EINV-2026-01", Some(Status::Overdue), Some(12)),
+            ]
+        );
     }
 }

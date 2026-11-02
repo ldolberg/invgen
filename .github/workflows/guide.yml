@@ -1,0 +1,111 @@
+# User guide: build the mdBook in guide/ and publish it to
+# https://ldolberg.github.io/invgen/guide/.
+#
+# The gh-pages branch also hosts the signed Flatpak OSTree repo at its root
+# (written by packaging/flatpak/publish.sh from the Release workflow). This
+# workflow must never touch anything outside guide/ there, so it:
+#   - clones the existing gh-pages branch and fails if it does not exist
+#     (it never creates or orphans the branch),
+#   - replaces only the guide/ directory,
+#   - refuses to commit if any staged path lies outside guide/,
+#   - pushes without --force; when a release pushed meanwhile, it resets to the
+#     new tip, redoes the guide/ copy and retries.
+#
+# Pull requests only build the book (no publish).
+name: Guide
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'guide/**'
+      - 'docs/**'
+      - '.github/workflows/guide.yml'
+  pull_request:
+    paths:
+      - 'guide/**'
+      - 'docs/**'
+      - '.github/workflows/guide.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: guide-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MDBOOK_VERSION: '0.5.4'
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install mdBook
+        run: |
+          url="https://github.com/rust-lang/mdBook/releases/download/v${MDBOOK_VERSION}/mdbook-v${MDBOOK_VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+          mkdir -p "$RUNNER_TEMP/bin"
+          curl -fsSL "$url" | tar xz -C "$RUNNER_TEMP/bin"
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+      - name: Build the book
+        run: mdbook build guide
+      - uses: actions/upload-artifact@v4
+        with:
+          name: guide
+          path: guide/book
+
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write   # push to gh-pages
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: guide
+          path: book
+      - name: Publish into gh-pages/guide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # No fallback: if gh-pages cannot be cloned, stop instead of creating a new branch.
+          git clone --quiet --depth=1 --single-branch --branch gh-pages "$remote" pages
+          cd pages
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          for attempt in 1 2 3 4 5; do
+            if [ "$attempt" -gt 1 ]; then
+              # Someone else (usually a release) pushed meanwhile: start over from the new tip.
+              sleep $((attempt * 5))
+              git fetch --quiet --depth=1 origin gh-pages
+              git reset --quiet --hard FETCH_HEAD
+            fi
+
+            rm -rf guide
+            mkdir guide
+            cp -R ../book/. guide/
+            git add -A guide
+
+            outside=$(git diff --cached --name-only | grep -v '^guide/' || true)
+            if [ -n "$outside" ]; then
+              echo "::error::refusing to publish, staged changes outside guide/:"
+              echo "$outside"
+              exit 1
+            fi
+            if git diff --cached --quiet; then
+              echo "guide unchanged"
+              exit 0
+            fi
+            git commit --quiet -m "Guide: ${GITHUB_SHA}"
+
+            if git push --quiet origin HEAD:gh-pages; then
+              echo "published https://ldolberg.github.io/invgen/guide/"
+              exit 0
+            fi
+            echo "push rejected (attempt $attempt)"
+          done
+          echo "::error::could not push to gh-pages"
+          exit 1
