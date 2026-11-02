@@ -63,15 +63,26 @@ detail.
 Prefer the terminal? Edit the file in any editor and run
 `invgen build ~/Documents/Invoices/EINV-2026-23.md`.
 
-## When the client pays
+Next month, start from this invoice instead of the template, so extra rows and
+notes come along:
 
-Change the status in the front matter:
-
-```yaml
-status: paid
+```sh
+invgen new --from last --client northwind --open
 ```
 
-`invgen list` then shows the invoice as paid. invgen never changes the status on
+The copy gets the next number, today's date and `status: pending`, and
+`October 2026 period` becomes `November 2026 period`.
+
+## When the client pays
+
+```sh
+invgen paid EINV-2026-23            # or: invgen paid 23 --on 2026-11-20
+```
+
+This sets `status: paid` and `paid_on:` in the front matter and leaves the rest
+of the file as it was. In the editor, right-click the invoice in the sidebar and
+choose **Mark as paid**. `invgen list` then shows the invoice as paid with the
+date. invgen never changes the status on
 its own; mark late invoices `overdue` yourself if you want them to stand out in
 the list and on the PDF.
 

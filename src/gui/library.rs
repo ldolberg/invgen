@@ -1,5 +1,6 @@
 //! Invoice library (sidebar) scanning and file watching.
 
+use super::{App, Pending, ToastKind};
 use crate::config::Config;
 use crate::model::{Status, format_money};
 use crate::parse::parse_invoice;
@@ -21,6 +22,7 @@ pub struct Entry {
     pub status: Option<Status>,
     pub days_overdue: Option<i64>,
     pub date: Option<chrono::NaiveDate>,
+    pub paid_on: Option<chrono::NaiveDate>,
 }
 
 /// Library entries for every invoice [`crate::library::discover`] finds in
@@ -35,10 +37,8 @@ pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
         let Ok(text) = std::fs::read_to_string(&path) else {
             continue;
         };
-        let parsed =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| parse_invoice(&text, cfg)));
-        let entry = match parsed {
-            Ok(Ok(inv)) => Entry {
+        let entry = match parse_invoice(&text, cfg) {
+            Ok(inv) => Entry {
                 path: path.clone(),
                 number: inv.number.clone(),
                 client: inv.to.name.clone(),
@@ -46,8 +46,9 @@ pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
                 status: Some(inv.effective_status(today)),
                 days_overdue: inv.days_overdue(today),
                 date: Some(inv.date),
+                paid_on: inv.paid_on,
             },
-            _ => Entry {
+            Err(_) => Entry {
                 path: path.clone(),
                 number: stem,
                 client: "could not parse".into(),
@@ -55,6 +56,7 @@ pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
                 status: None,
                 days_overdue: None,
                 date: None,
+                paid_on: None,
             },
         };
         out.push(entry);
@@ -75,6 +77,81 @@ fn seq(number: &str) -> u64 {
         .next()
         .and_then(|s| s.parse().ok())
         .unwrap_or(0)
+}
+
+/// An action from the sidebar context menu.
+#[derive(Clone, Copy)]
+pub enum Action {
+    /// Write this status (`paid` also records `paid_on` as today).
+    SetStatus(Status),
+    /// Copy the invoice as the next one and open it.
+    Duplicate,
+}
+
+impl App {
+    /// Run a sidebar context menu `action` on the invoice at `path`.
+    pub fn library_action(&mut self, path: PathBuf, action: Action) {
+        let today = chrono::Local::now().date_naive();
+        match action {
+            Action::SetStatus(status) => self.write_status(&path, status, today),
+            Action::Duplicate => match crate::duplicate::duplicate_file(&self.cfg, &path, today) {
+                Ok(new) => {
+                    self.library_due = Some(std::time::Instant::now());
+                    self.toast(
+                        ToastKind::Success,
+                        format!("Created {}", super::file_name(&new)),
+                    );
+                    self.request(Pending::Open(new));
+                }
+                Err(e) => self.toast(ToastKind::Error, format!("Duplicate failed: {e:#}")),
+            },
+        }
+    }
+
+    fn write_status(&mut self, path: &Path, status: Status, today: NaiveDate) {
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        let is_open = self
+            .path
+            .as_deref()
+            .is_some_and(|p| canon(p) == canon(path));
+        if is_open && self.dirty() {
+            self.toast(
+                ToastKind::Error,
+                format!(
+                    "{} has unsaved changes. Save first, then set the status.",
+                    self.display_name()
+                ),
+            );
+            return;
+        }
+        let result = std::fs::read_to_string(path)
+            .map_err(anyhow::Error::from)
+            .and_then(|src| crate::frontmatter::set_status(&src, status, None, today))
+            .and_then(|text| {
+                std::fs::write(path, &text)?;
+                Ok(text)
+            });
+        match result {
+            Ok(text) => {
+                if is_open {
+                    // Show the new front matter right away; the watcher then
+                    // sees nothing new on disk.
+                    self.text = text.clone();
+                    self.saved_text = text;
+                    self.text_changed(true);
+                }
+                self.library_due = Some(std::time::Instant::now());
+                self.toast(
+                    ToastKind::Success,
+                    format!("{} marked {}", super::file_name(path), status.label()),
+                );
+            }
+            Err(e) => self.toast(
+                ToastKind::Error,
+                format!("Could not update {}: {e:#}", super::file_name(path)),
+            ),
+        }
+    }
 }
 
 /// Scans the library off the UI thread.

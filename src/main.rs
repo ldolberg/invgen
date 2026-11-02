@@ -1,12 +1,14 @@
 //! `invgen` command line. With no arguments (or `invgen edit FILE`) it opens the GUI.
 
 use anyhow::{Context, Result, bail};
-use chrono::{Datelike, Local};
+use chrono::{Datelike, Local, NaiveDate};
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand};
 use invgen::config::{Config, DEFAULT_CONFIG};
-use invgen::model::{Decimal, Invoice, Status, format_money};
+use invgen::model::{Decimal, Invoice, Status, format_amount, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
+use invgen::report::{self, Aging, Filter, Library, Severity};
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -50,9 +52,14 @@ enum Cmd {
     },
     /// Create the next invoice in the invoices directory.
     New {
-        /// Client key from the config (default: the first client).
+        /// Client key from the config (default: the first client). With
+        /// `--from last`, duplicate that client's latest invoice.
         #[arg(long, value_name = "KEY")]
         client: Option<String>,
+        /// Duplicate an existing invoice (a number, a file, or `last`) instead
+        /// of starting from the template.
+        #[arg(long, value_name = "NUMBER|last")]
+        from: Option<String>,
         /// Open the new invoice in the editor.
         #[arg(long)]
         open: bool,
@@ -65,8 +72,50 @@ enum Cmd {
         #[arg(short, long, value_name = "OUT.pdf")]
         output: Option<PathBuf>,
     },
-    /// List the invoices in the invoices directory with yearly totals.
-    List,
+    /// List the invoices in the invoices directory with yearly totals and
+    /// the outstanding balance. Filters combine (AND).
+    List {
+        /// Only invoices dated in this year.
+        #[arg(long, value_name = "YYYY")]
+        year: Option<i32>,
+        /// Only this client: a config key, or part of the client name
+        /// (case-insensitive).
+        #[arg(long, value_name = "KEY|NAME")]
+        client: Option<String>,
+        /// Only invoices with this effective status (pending, paid, overdue,
+        /// draft). Repeat to allow several.
+        #[arg(long, value_name = "STATUS", value_parser = invgen::report::parse_status)]
+        status: Vec<Status>,
+        /// Only unpaid invoices (effective status pending or overdue).
+        #[arg(long)]
+        unpaid: bool,
+        /// Output format. csv and json are for scripts and spreadsheets.
+        #[arg(long, value_enum, default_value_t = ListFormat::Table)]
+        format: ListFormat,
+    },
+    /// Check the library: duplicate numbers, gaps, dates out of order,
+    /// files that fail to parse, missing client name or sender tax lines.
+    Check {
+        /// Exit with status 1 on warnings too, not only on errors.
+        #[arg(long)]
+        strict: bool,
+    },
+    /// Mark an invoice as paid: sets `status: paid` and `paid_on`.
+    Paid {
+        /// Invoice file, or its number in the invoices directory (EINV-2026-23 or 23).
+        invoice: String,
+        /// Payment date (default: the date already recorded, else today).
+        #[arg(long, value_name = "YYYY-MM-DD")]
+        on: Option<NaiveDate>,
+    },
+    /// Set the written status of an invoice (any status but paid removes `paid_on`).
+    Status {
+        /// Invoice file, or its number in the invoices directory (EINV-2026-23 or 23).
+        invoice: String,
+        #[arg(value_parser = PossibleValuesParser::new(["pending", "paid", "overdue", "draft"])
+            .map(|s| s.parse::<Status>().unwrap_or_default()))]
+        status: Status,
+    },
     /// Show the config path, creating a commented default if it is missing.
     Config {
         /// Open the config in $VISUAL / $EDITOR.
@@ -83,6 +132,13 @@ enum Cmd {
         #[arg(long)]
         force: bool,
     },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+enum ListFormat {
+    Table,
+    Csv,
+    Json,
 }
 
 fn main() -> ExitCode {
@@ -112,16 +168,43 @@ fn run(cli: Cli) -> Result<ExitCode> {
                 None => Ok(ExitCode::FAILURE),
             }
         }
-        Some(Cmd::New { client, open }) => {
+        Some(Cmd::New { client, from, open }) => {
             let cfg = load_config(config_path.as_deref())?;
-            cmd_new(&cfg, client.as_deref(), open, config_path)
+            match from {
+                Some(from) => cmd_new_from(&cfg, &from, client.as_deref(), open, config_path),
+                None => cmd_new(&cfg, client.as_deref(), open, config_path),
+            }
         }
         Some(Cmd::Watch { file, output }) => {
             cmd_watch(config_path.as_deref(), &file, output.as_deref())
         }
-        Some(Cmd::List) => {
+        Some(Cmd::List {
+            year,
+            client,
+            status,
+            unpaid,
+            format,
+        }) => {
             let cfg = load_config(config_path.as_deref())?;
-            cmd_list(&cfg)
+            let filter = Filter {
+                year,
+                client,
+                statuses: status,
+                unpaid,
+            };
+            cmd_list(&cfg, &filter, format)
+        }
+        Some(Cmd::Check { strict }) => {
+            let cfg = load_config(config_path.as_deref())?;
+            cmd_check(&cfg, strict)
+        }
+        Some(Cmd::Paid { invoice, on }) => {
+            let cfg = load_config(config_path.as_deref())?;
+            cmd_set_status(&cfg, &invoice, Status::Paid, on)
+        }
+        Some(Cmd::Status { invoice, status }) => {
+            let cfg = load_config(config_path.as_deref())?;
+            cmd_set_status(&cfg, &invoice, status, None)
         }
         Some(Cmd::Config { edit }) => cmd_config(config_path.as_deref(), edit),
         Some(Cmd::Template { export, force }) => cmd_template(export.flatten().as_deref(), force),
@@ -236,6 +319,16 @@ fn cmd_new(
     open: bool,
     config_path: Option<PathBuf>,
 ) -> Result<ExitCode> {
+    check_client(cfg, client)?;
+    let path = cfg.write_new_invoice(client)?;
+    println!("{}", path.display());
+    if open {
+        invgen::gui::run(Some(path), config_path)?;
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn check_client(cfg: &Config, client: Option<&str>) -> Result<()> {
     if let Some(key) = client
         && !cfg.clients.contains_key(key)
     {
@@ -247,11 +340,61 @@ fn cmd_new(
         }
         bail!("unknown client `{key}` (known: {})", known.join(", "));
     }
-    let path = cfg.write_new_invoice(client)?;
+    Ok(())
+}
+
+/// `invgen new --from <NUMBER|FILE|last>`: see [`invgen::duplicate`].
+fn cmd_new_from(
+    cfg: &Config,
+    from: &str,
+    client: Option<&str>,
+    open: bool,
+    config_path: Option<PathBuf>,
+) -> Result<ExitCode> {
+    check_client(cfg, client)?;
+    let source = if from == "last" {
+        invgen::lookup::last(cfg, client)?
+    } else if client.is_some() {
+        bail!("--client only applies to `--from last`")
+    } else {
+        invgen::lookup::resolve(cfg, from)?
+    };
+    let today = Local::now().date_naive();
+    let path = invgen::duplicate::duplicate_file(cfg, &source, today)?;
     println!("{}", path.display());
     if open {
         invgen::gui::run(Some(path), config_path)?;
     }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `invgen paid` / `invgen status`: rewrite only the front matter lines.
+fn cmd_set_status(
+    cfg: &Config,
+    invoice: &str,
+    status: Status,
+    on: Option<NaiveDate>,
+) -> Result<ExitCode> {
+    let path = invgen::lookup::resolve(cfg, invoice)?;
+    let src =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+    let today = Local::now().date_naive();
+    let out = invgen::frontmatter::set_status(&src, status, on, today)
+        .with_context(|| format!("editing {}", path.display()))?;
+    if out != src {
+        std::fs::write(&path, &out).with_context(|| format!("writing {}", path.display()))?;
+    }
+    let st = Style::stdout();
+    let paid_on = invgen::frontmatter::get(&out, "paid_on")?
+        .filter(|_| status == Status::Paid)
+        .map(|d| format!(" on {d}"))
+        .unwrap_or_default();
+    println!(
+        "{}{}  {}",
+        st.green_bold(status.label()),
+        paid_on,
+        st.dim(&path.display().to_string())
+    );
     Ok(ExitCode::SUCCESS)
 }
 
@@ -313,7 +456,7 @@ fn cmd_watch(config_path: Option<&Path>, file: &Path, output: Option<&Path>) -> 
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_list(cfg: &Config) -> Result<ExitCode> {
+fn cmd_list(cfg: &Config, filter: &Filter, format: ListFormat) -> Result<ExitCode> {
     let st = Style::stdout();
     let dir = &cfg.invoices_dir;
     if !dir.is_dir() {
@@ -322,66 +465,64 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
             dir.display()
         );
     }
-    let files = invgen::library::discover(dir);
-    let today = Local::now().date_naive();
-    let mut rows = Vec::new();
-    let mut failed = false;
-    for f in &files {
-        let Ok(src) = std::fs::read_to_string(f) else {
-            continue;
+    let lib = Library::load(cfg);
+    let est = Style::stderr();
+    for e in &lib.errors {
+        let loc = if e.line > 0 {
+            format!("{}:{}:", e.path.display(), e.line)
+        } else {
+            format!("{}:", e.path.display())
         };
-        match parse_invoice(&src, cfg) {
-            Ok(inv) => rows.push(inv),
-            Err(e) => {
-                failed = true;
-                let loc = if e.line > 0 {
-                    format!("{}:{}:", f.display(), e.line)
-                } else {
-                    format!("{}:", f.display())
-                };
-                eprintln!(
-                    "{} {} {}",
-                    Style::stderr().bold(&loc),
-                    Style::stderr().yellow("skipped:"),
-                    e.message
-                );
-            }
+        eprintln!(
+            "{} {} {}",
+            est.bold(&loc),
+            est.yellow("skipped:"),
+            e.message
+        );
+    }
+    let code = if lib.errors.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    };
+    let today = Local::now().date_naive();
+    let rows = filter.apply(&lib.entries, today);
+    match format {
+        ListFormat::Csv => {
+            print!("{}", report::to_csv(&rows, today));
+            return Ok(code);
         }
+        ListFormat::Json => {
+            print!("{}", report::to_json(&rows, today));
+            return Ok(code);
+        }
+        ListFormat::Table => {}
     }
     if rows.is_empty() {
-        println!("no invoices in {}", dir.display());
-        return Ok(ExitCode::SUCCESS);
+        if lib.entries.is_empty() {
+            println!("no invoices in {}", dir.display());
+        } else {
+            println!("no invoices match the filters");
+        }
+        return Ok(code);
     }
-    // Sequence numbers are global and monotonic, so they give the issue order.
-    rows.sort_by(|a, b| {
-        (seq_of(&a.number), a.date, &a.number).cmp(&(seq_of(&b.number), b.date, &b.number))
-    });
-    // year -> currency -> sum
-    let mut per_year: BTreeMap<i32, BTreeMap<String, Decimal>> = BTreeMap::new();
-    for inv in &rows {
-        let sum = per_year
-            .entry(inv.date.year())
-            .or_default()
-            .entry(inv.currency.clone())
-            .or_default();
-        *sum = sum.saturating_add(inv.total());
-    }
+    let per_year = report::year_totals(&rows);
 
     let w_num = rows
         .iter()
-        .map(|r| r.number.len())
+        .map(|r| r.invoice.number.len())
         .max()
         .unwrap_or(6)
         .max(6);
     let w_client = rows
         .iter()
-        .map(|r| r.to.name.chars().count())
+        .map(|r| r.invoice.to.name.chars().count())
         .max()
         .unwrap_or(6)
         .clamp(6, 32);
     let totals: Vec<String> = rows
         .iter()
-        .map(|r| format_money(&r.currency, r.total()))
+        .map(|r| format_money(&r.invoice.currency, r.invoice.total()))
         .collect();
     let w_total = totals
         .iter()
@@ -403,14 +544,15 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
         ))
     );
     let mut last_year = None;
-    for (inv, total) in rows.iter().zip(&totals) {
+    for (entry, total) in rows.iter().zip(&totals) {
+        let inv = &entry.invoice;
         let year = inv.date.year();
         if last_year.is_some_and(|y| y != year) {
             print_year_total(&st, last_year.unwrap(), &per_year, w_num, w_client, w_total);
         }
         last_year = Some(year);
         let client: String = inv.to.name.chars().take(w_client).collect();
-        let status = inv.status_display(today);
+        let status = inv.status_detail(today);
         let status = match inv.effective_status(today) {
             Status::Paid => st.green(&status),
             Status::Overdue => st.red_bold(&status),
@@ -429,11 +571,8 @@ fn cmd_list(cfg: &Config) -> Result<ExitCode> {
     if let Some(y) = last_year {
         print_year_total(&st, y, &per_year, w_num, w_client, w_total);
     }
-    Ok(if failed {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    })
+    print_outstanding(&st, &report::outstanding(&rows, today));
+    Ok(code)
 }
 
 fn print_year_total(
@@ -460,12 +599,91 @@ fn print_year_total(
     println!();
 }
 
-fn seq_of(number: &str) -> u64 {
-    number
-        .rsplit('-')
-        .next()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(0)
+/// Outstanding balance per currency with aging buckets (days past due).
+fn print_outstanding(st: &Style, outstanding: &BTreeMap<String, Aging>) {
+    if outstanding.is_empty() {
+        return;
+    }
+    let header = [
+        "OUTSTANDING",
+        "NOT DUE YET",
+        "1-30 DAYS",
+        "31-60 DAYS",
+        "61+ DAYS",
+        "TOTAL",
+    ];
+    let rows: Vec<[String; 6]> = outstanding
+        .iter()
+        .map(|(cur, a)| {
+            [
+                cur.clone(),
+                format_amount(a.not_due),
+                format_amount(a.days_1_30),
+                format_amount(a.days_31_60),
+                format_amount(a.days_61_plus),
+                format_amount(a.total()),
+            ]
+        })
+        .collect();
+    let widths: Vec<usize> = (0..header.len())
+        .map(|i| {
+            rows.iter()
+                .map(|r| r[i].len())
+                .chain([header[i].len()])
+                .max()
+                .unwrap_or(0)
+        })
+        .collect();
+    let line = |cells: [&str; 6]| {
+        let mut s = format!("{:<w$}", cells[0], w = widths[0]);
+        for (i, c) in cells.iter().enumerate().skip(1) {
+            s.push_str(&format!("  {:>w$}", c, w = widths[i]));
+        }
+        s
+    };
+    println!("{}", st.bold(&line(header)));
+    for r in &rows {
+        println!("{}", line(r.each_ref().map(String::as_str)));
+    }
+}
+
+fn cmd_check(cfg: &Config, strict: bool) -> Result<ExitCode> {
+    let dir = &cfg.invoices_dir;
+    if !dir.is_dir() {
+        bail!(
+            "invoices directory {} does not exist (create one with `invgen new`)",
+            dir.display()
+        );
+    }
+    let lib = Library::load(cfg);
+    let diags = report::check(&lib, &report::pdf_stems(cfg));
+    let st = Style::stdout();
+    for d in &diags {
+        let sev = match d.severity {
+            Severity::Error => st.red_bold("error:"),
+            Severity::Warning => st.yellow("warning:"),
+        };
+        println!("{} {} {}", st.bold(&d.location()), sev, d.message);
+    }
+    let errors = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    let warnings = diags.len() - errors;
+    let checked = lib.entries.len() + lib.errors.len();
+    if diags.is_empty() {
+        println!(
+            "{} {checked} invoice(s) checked, no problems",
+            st.green_bold("ok:")
+        );
+    } else {
+        println!("{checked} invoice(s) checked: {errors} error(s), {warnings} warning(s)");
+    }
+    Ok(if errors > 0 || (strict && warnings > 0) {
+        ExitCode::FAILURE
+    } else {
+        ExitCode::SUCCESS
+    })
 }
 
 fn cmd_template(path: Option<&Path>, force: bool) -> Result<ExitCode> {
