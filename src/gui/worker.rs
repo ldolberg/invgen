@@ -22,6 +22,8 @@ pub enum Job {
         path: Option<PathBuf>,
         dir: PathBuf,
     },
+    /// The config changed (clients edited, first-run setup): use this one from now on.
+    Config(Arc<Config>),
 }
 
 pub enum Outcome {
@@ -125,6 +127,7 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
         }
     };
     let mut cache: Option<Cache> = None;
+    let mut cfg = cfg;
 
     while let Ok(first) = rx.recv() {
         // Coalesce: run every export, but only the newest preview.
@@ -139,6 +142,11 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
         let last_preview = jobs.iter().rposition(|j| matches!(j, Job::Preview { .. }));
         for (i, job) in jobs.into_iter().enumerate() {
             match job {
+                Job::Config(new) => {
+                    cfg = new;
+                    cache = None;
+                    continue;
+                }
                 Job::Export { text, path, dir } => {
                     let res = (|| -> Result<PathBuf, String> {
                         let fresh;
