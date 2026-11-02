@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7f7e3581.js";
+            window.path_to_searchindex_js = "searchindex-39f425bb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c6fff20e.js"></script>
+        <script src="toc-3f7992f4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -266,6 +266,13 @@ month before it moves forward by the number of months since the source date
 other months are left alone.</li>
 </ul>
 <p>Quantities are copied as they are, so check the number of days.</p>
+<h2 id="invgen-new---credit-number---open"><a class="header" href="#invgen-new---credit-number---open"><code>invgen new --credit NUMBER [--open]</code></a></h2>
+<p>Creates the next credit note (<code>CN-&lt;year&gt;-&lt;seq&gt;</code>, see <code>credit_prefix</code>) reversing
+invoice <code>NUMBER</code>, prefilled with that invoice’s front matter and items, and prints
+its path. <code>NUMBER</code> is found like for <code>invgen paid</code>: the full number, the bare
+sequence number or a file path. Crediting a credit note is an error. <code>--credit</code>
+cannot be combined with <code>--client</code> or <code>--from</code>. See
+<a href="recipes/credit-notes.html">Correcting an invoice with a credit note</a>.</p>
 <h2 id="invgen-build-filemd--o-outpdf---png-dir---strict"><a class="header" href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]</code></a></h2>
 <p>Renders one invoice.</p>
 <div class="table-wrapper">
@@ -390,6 +397,11 @@ a due date count as not due yet. Drafts and paid invoices are not outstanding.</
 </tbody>
 </table>
 </div>
+<p>Credit notes show a negative total and <code>credit note for &lt;NUMBER&gt;</code> after the
+status. They are placed by date among the invoices and subtracted from the yearly
+totals; an unpaid credit note lowers the outstanding balance in the age bucket of
+the invoice it refers to (or as not due yet when that invoice is paid or not
+shown).</p>
 <p>Filters combine: <code>invgen list --year 2026 --client northwind --unpaid</code> shows
 what Northwind still owes for 2026. The yearly totals and the outstanding
 balance only count the invoices shown.</p>
@@ -422,7 +434,8 @@ invoices/EINV-2026-28.md:3: error: EINV-2026-28 is dated 2026-09-01, before the 
 <li>a higher number dated before a lower one (drafts are ignored here);</li>
 <li>an invoice whose client has no name;</li>
 <li>an issued invoice (with <code>issued_hash</code>) whose resolved content changed since it
-was exported, see <a href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>build</code></a>.</li>
+was exported, see <a href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>build</code></a>;</li>
+<li>a credit note whose <code>refers_to</code> is not an invoice in the library.</li>
 </ul>
 <p>Warnings:</p>
 <ul>

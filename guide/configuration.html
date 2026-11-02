@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7f7e3581.js";
+            window.path_to_searchindex_js = "searchindex-39f425bb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c6fff20e.js"></script>
+        <script src="toc-3f7992f4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -205,6 +205,7 @@ bank or clients. An empty file behaves the same way.</p>
 <h2 id="keys"><a class="header" href="#keys">Keys</a></h2>
 <pre><code class="language-yaml">invoices_dir: ~/Documents/Invoices   # where invoices live; `~` is expanded
 number_prefix: EINV                  # numbers look like EINV-&lt;year&gt;-&lt;seq&gt;
+credit_prefix: CN                    # credit notes look like CN-&lt;year&gt;-&lt;seq&gt;
 currency: EUR                        # default currency code
 tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
@@ -255,6 +256,7 @@ clients:
 <tbody>
 <tr><td><code>invoices_dir</code></td><td><code>~/Documents/Invoices</code></td><td>Where <code>invgen new</code> and the editor create invoices, where <code>invgen list</code> and the editor sidebar look, and the folder scanned for the next number.</td></tr>
 <tr><td><code>number_prefix</code></td><td><code>EINV</code></td><td>Prefix of generated numbers. The starter file written by <code>invgen config</code> sets <code>INV</code>.</td></tr>
+<tr><td><code>credit_prefix</code></td><td><code>CN</code></td><td>Prefix of credit note numbers. Credit notes have their own sequence.</td></tr>
 <tr><td><code>currency</code></td><td><code>EUR</code></td><td>Currency code printed next to amounts. Any text works; invgen does not convert between currencies.</td></tr>
 <tr><td><code>tax_rate</code></td><td><code>0</code></td><td>Percent applied to the subtotal. Single lines can use another rate (a <code>Tax</code> column or <code>, tax 10%</code>), see <a href="https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#body-rules">FORMAT.md</a>.</td></tr>
 <tr><td><code>tax_note</code></td><td>none</td><td>Legal tax mention printed under the totals: <code>reverse_charge</code>, <code>exempt</code>, <code>outside_scope</code> (translated into the invoice language) or any free text. See <a href="#tax-notes">Tax notes</a>.</td></tr>
@@ -353,6 +355,9 @@ sequence is global: it keeps counting across years (<code>EINV-2025-13</code> is
 levels of subfolders for <code>.md</code> and <code>.pdf</code> files named <code>&lt;prefix&gt;-YYYY-N...</code>, takes
 the highest <code>N</code> and adds one. Per-year folders such as <code>Invoices/2025/</code> are
 therefore fine.</p>
+<p>Credit notes use the same scheme with <code>credit_prefix</code> (<code>CN-2026-01</code>). Each prefix
+keeps its own sequence, so credit notes and invoices never use up each other’s
+numbers.</p>
 <h2 id="changes-take-effect"><a class="header" href="#changes-take-effect">Changes take effect</a></h2>
 <p>The CLI reads the config on every command (and <code>invgen watch</code> on every rebuild).
 The editor reads it once at startup, so restart the editor after changing the

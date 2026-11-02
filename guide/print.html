@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-7f7e3581.js";
+            window.path_to_searchindex_js = "searchindex-39f425bb.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-c6fff20e.js"></script>
+        <script src="toc-3f7992f4.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -355,6 +355,7 @@ bank or clients. An empty file behaves the same way.</p>
 <h2 id="keys"><a class="header" href="#keys">Keys</a></h2>
 <pre><code class="language-yaml">invoices_dir: ~/Documents/Invoices   # where invoices live; `~` is expanded
 number_prefix: EINV                  # numbers look like EINV-&lt;year&gt;-&lt;seq&gt;
+credit_prefix: CN                    # credit notes look like CN-&lt;year&gt;-&lt;seq&gt;
 currency: EUR                        # default currency code
 tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
@@ -405,6 +406,7 @@ clients:
 <tbody>
 <tr><td><code>invoices_dir</code></td><td><code>~/Documents/Invoices</code></td><td>Where <code>invgen new</code> and the editor create invoices, where <code>invgen list</code> and the editor sidebar look, and the folder scanned for the next number.</td></tr>
 <tr><td><code>number_prefix</code></td><td><code>EINV</code></td><td>Prefix of generated numbers. The starter file written by <code>invgen config</code> sets <code>INV</code>.</td></tr>
+<tr><td><code>credit_prefix</code></td><td><code>CN</code></td><td>Prefix of credit note numbers. Credit notes have their own sequence.</td></tr>
 <tr><td><code>currency</code></td><td><code>EUR</code></td><td>Currency code printed next to amounts. Any text works; invgen does not convert between currencies.</td></tr>
 <tr><td><code>tax_rate</code></td><td><code>0</code></td><td>Percent applied to the subtotal. Single lines can use another rate (a <code>Tax</code> column or <code>, tax 10%</code>), see <a href="https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#body-rules">FORMAT.md</a>.</td></tr>
 <tr><td><code>tax_note</code></td><td>none</td><td>Legal tax mention printed under the totals: <code>reverse_charge</code>, <code>exempt</code>, <code>outside_scope</code> (translated into the invoice language) or any free text. See <a href="#tax-notes">Tax notes</a>.</td></tr>
@@ -503,6 +505,9 @@ sequence is global: it keeps counting across years (<code>EINV-2025-13</code> is
 levels of subfolders for <code>.md</code> and <code>.pdf</code> files named <code>&lt;prefix&gt;-YYYY-N...</code>, takes
 the highest <code>N</code> and adds one. Per-year folders such as <code>Invoices/2025/</code> are
 therefore fine.</p>
+<p>Credit notes use the same scheme with <code>credit_prefix</code> (<code>CN-2026-01</code>). Each prefix
+keeps its own sequence, so credit notes and invoices never use up each other’s
+numbers.</p>
 <h2 id="changes-take-effect"><a class="header" href="#changes-take-effect">Changes take effect</a></h2>
 <p>The CLI reads the config on every command (and <code>invgen watch</code> on every rebuild).
 The editor reads it once at startup, so restart the editor after changing the
@@ -677,6 +682,8 @@ sets no <code>tax_note</code> and the client has <code>tax</code> lines (such as
 <li><code>issued_hash</code>: written by invgen when the invoice is first exported; see
 <a href="#issued-invoices-issued_hash">Issued invoices</a>. Do not write it by hand.</li>
 <li><code>sent_on</code>: <code>YYYY-MM-DD</code>, written by <code>invgen send --mark-sent</code>. Informational only.</li>
+<li><code>kind</code>: <code>invoice</code> (default) or <code>credit_note</code>; see <a href="#credit-notes">Credit notes</a>.
+<code>refers_to</code> and <code>refers_to_date</code> are only allowed on credit notes.</li>
 </ul>
 <h2 id="issued-invoices-issued_hash"><a class="header" href="#issued-invoices-issued_hash">Issued invoices (<code>issued_hash</code>)</a></h2>
 <p>Once an invoice is sent it should not change. When a non-draft invoice is exported
@@ -747,6 +754,52 @@ message is only handed to your mail client, and you press Send there.
 <code>--dry-run</code> prints the message and the command instead of running anything;
 <code>--mark-sent</code> records <code>sent_on: &lt;today&gt;</code> in the front matter after the mail client
 opened. The editor’s <strong>Send</strong> button exports the PDF and then does the same.</p>
+<h2 id="credit-notes"><a class="header" href="#credit-notes">Credit notes</a></h2>
+<p>An issued invoice should not be edited or deleted; a correction goes through a
+credit note that references it and reverses all or part of it.</p>
+<pre><code class="language-markdown">---
+kind: credit_note
+number: CN-2026-01            # optional: auto = next number in the credit_prefix sequence
+date: 2026-11-02
+refers_to: EINV-2026-20       # required: the invoice this credit note reverses
+refers_to_date: 2026-10-01    # optional: looked up from the library when omitted
+status: pending
+client: northwind
+---
+
+| Description              | Qty | Unit | Rate   |
+|--------------------------|-----|------|--------|
+| Senior Software Engineer | 2   | days | 450.00 |
+</code></pre>
+<ul>
+<li><strong>Amounts are written positive.</strong> Write quantities and rates as on the invoice
+(<code>2 days @ 450.00</code>); <code>kind: credit_note</code> makes the whole document count
+negatively. Totals and rounding work exactly as for invoices (see
+<a href="#totals-and-rounding">Totals and rounding</a>), and the
+result is then negated: the PDF shows each line total, the subtotal, the tax and
+the total as negative amounts (<code>EUR -900.00</code>) while quantities and rates stay as
+written. <code>invgen list</code> and its CSV/JSON export subtract the credit note from the
+totals, so an invoice and its full credit note net to zero.</li>
+<li><strong>Numbering</strong>: credit notes have their own sequence with <code>credit_prefix</code> (config,
+default <code>CN</code>): <code>CN-2026-01</code>, <code>CN-2026-02</code>… Invoices and credit notes never consume
+each other’s numbers. Keep the two prefixes different.</li>
+<li><strong>Reference</strong>: <code>refers_to</code> is required. The PDF is titled “Credit note” (translated
+like every label) and shows “Refers to invoice EINV-2026-20 of October 1, 2026”
+under the title. The date is <code>refers_to_date</code> when written, else the date of the
+invoice with that number in the invoice library (matched against the front matter
+<code>number:</code>, else the file name; its <code>date:</code> must be written). When neither is
+found the line leaves the date out.</li>
+<li><strong>Due date</strong>: a credit note has none unless <code>due</code> or <code>due_days</code> is written in its
+front matter (the config <code>due_days</code> does not apply), so it is never overdue.</li>
+<li><code>invgen check</code> reports a credit note whose <code>refers_to</code> is not an invoice in the
+library.</li>
+<li><code>invgen new --credit EINV-2026-20</code> creates the next credit note in <code>invoices_dir</code>,
+prefilled from that invoice: its front matter is copied except <code>number</code>, <code>date</code>,
+<code>due</code>, <code>due_days</code>, <code>status</code>, <code>paid_on</code>, <code>issued_hash</code>, <code>sent_on</code>, <code>kind</code> and
+<code>refers_to*</code>, which are replaced or removed, and its items and notes are copied as
+written. Delete or reduce lines to credit only part of the invoice. Like an
+invoice, a credit note is locked (<code>issued_hash</code>) when it is first exported.</li>
+</ul>
 <h2 id="branding-and-languages"><a class="header" href="#branding-and-languages">Branding and languages</a></h2>
 <ul>
 <li><strong>Logo</strong>: <code>from.logo</code> (SVG, PNG, JPEG, GIF or WebP) is drawn top-left in the header,
@@ -858,7 +911,9 @@ to fill in above 999,999,999.99);</li>
 <p>The code uses version 002, UTF-8 and error correction level M. It is skipped when the
 currency is not EUR, the IBAN is missing or fails its checksum, or the total is not
 positive: <code>invgen build</code> then prints a warning on stderr and still writes the PDF; the
-editor preview simply shows no code. <code>qr: false</code> turns it off for one invoice.</p>
+editor preview simply shows no code. <code>qr: false</code> turns it off for one invoice.
+Credit notes never show the code (there is nothing for the client to pay), without
+a warning.</p>
 <h2 id="front-matter-overrides"><a class="header" href="#front-matter-overrides">Front matter overrides</a></h2>
 <p>Any of <code>from:</code>, <code>to:</code>, <code>payment:</code> may be given inline using the same shape as the
 config (<code>name</code>, <code>address: [..]</code>, <code>tax: [..]</code>, <code>email</code>, <code>phone</code> / <code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code>, <code>qr</code>).
@@ -893,6 +948,7 @@ An invalid override is reported at the <code>config:</code> line.</p>
 <h2 id="config-configinvgenconfigyaml"><a class="header" href="#config-configinvgenconfigyaml">Config (<code>~/.config/invgen/config.yaml</code>)</a></h2>
 <pre><code class="language-yaml">invoices_dir: ~/Documents/Invoices   # where `invgen new` puts .md and exports .pdf
 number_prefix: EINV                  # numbers look like EINV-&lt;year&gt;-&lt;seq&gt;
+credit_prefix: CN                    # optional: credit notes, CN-&lt;year&gt;-&lt;seq&gt; (default CN)
 currency: EUR
 tax_rate: 0
 due_days: 14
@@ -940,7 +996,9 @@ clients:
 library (see below) for <code>&lt;prefix&gt;-YYYY-N*.md</code> / <code>.pdf</code> files, with N
 padded or not (<code>EINV-2025-1</code>, <code>EINV-2025-02</code>), takes the highest N of any year plus one
 and formats it with at least two digits: <code>EINV-2026-01</code> for an empty directory.
-<code>~</code> in <code>invoices_dir</code> is expanded; the default is <code>~/Documents/Invoices</code>.</p>
+<code>~</code> in <code>invoices_dir</code> is expanded; the default is <code>~/Documents/Invoices</code>.
+Each prefix has its own sequence: credit notes count only <code>&lt;credit_prefix&gt;-...</code> files,
+so <code>CN-2026-03.md</code> does not advance the invoice numbers (and vice versa).</p>
 <p>The invoice library is <code>invoices_dir</code> plus up to two levels of subfolders
 (<code>Invoices/2026/</code>, <code>Invoices/clients/acme/</code>); hidden folders such as <code>.git</code> are
 skipped. <code>invgen list</code>, the editor sidebar and next-number scanning all use it.</p>
@@ -1041,6 +1099,13 @@ month before it moves forward by the number of months since the source date
 other months are left alone.</li>
 </ul>
 <p>Quantities are copied as they are, so check the number of days.</p>
+<h2 id="invgen-new---credit-number---open"><a class="header" href="#invgen-new---credit-number---open"><code>invgen new --credit NUMBER [--open]</code></a></h2>
+<p>Creates the next credit note (<code>CN-&lt;year&gt;-&lt;seq&gt;</code>, see <code>credit_prefix</code>) reversing
+invoice <code>NUMBER</code>, prefilled with that invoice’s front matter and items, and prints
+its path. <code>NUMBER</code> is found like for <code>invgen paid</code>: the full number, the bare
+sequence number or a file path. Crediting a credit note is an error. <code>--credit</code>
+cannot be combined with <code>--client</code> or <code>--from</code>. See
+<a href="#correcting-an-invoice-with-a-credit-note">Correcting an invoice with a credit note</a>.</p>
 <h2 id="invgen-build-filemd--o-outpdf---png-dir---strict"><a class="header" href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>invgen build FILE.md [-o OUT.pdf] [--png DIR] [--strict]</code></a></h2>
 <p>Renders one invoice.</p>
 <div class="table-wrapper">
@@ -1165,6 +1230,11 @@ a due date count as not due yet. Drafts and paid invoices are not outstanding.</
 </tbody>
 </table>
 </div>
+<p>Credit notes show a negative total and <code>credit note for &lt;NUMBER&gt;</code> after the
+status. They are placed by date among the invoices and subtracted from the yearly
+totals; an unpaid credit note lowers the outstanding balance in the age bucket of
+the invoice it refers to (or as not due yet when that invoice is paid or not
+shown).</p>
 <p>Filters combine: <code>invgen list --year 2026 --client northwind --unpaid</code> shows
 what Northwind still owes for 2026. The yearly totals and the outstanding
 balance only count the invoices shown.</p>
@@ -1197,7 +1267,8 @@ invoices/EINV-2026-28.md:3: error: EINV-2026-28 is dated 2026-09-01, before the 
 <li>a higher number dated before a lower one (drafts are ignored here);</li>
 <li>an invoice whose client has no name;</li>
 <li>an issued invoice (with <code>issued_hash</code>) whose resolved content changed since it
-was exported, see <a href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>build</code></a>.</li>
+was exported, see <a href="#invgen-build-filemd--o-outpdf---png-dir---strict"><code>build</code></a>;</li>
+<li>a credit note whose <code>refers_to</code> is not an invoice in the library.</li>
 </ul>
 <p>Warnings:</p>
 <ul>
@@ -1540,6 +1611,53 @@ the client entry, which wins over global keys. So to change the tax rate for a
 client that has its own <code>tax_rate</code>, override it under <code>clients:</code> or use the
 top-level <code>tax_rate:</code> key, not a global <code>tax_rate</code> inside <code>config:</code>.</p>
 <p>The full rules are in <a href="#front-matter-overrides">Invoice format</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="correcting-an-invoice-with-a-credit-note"><a class="header" href="#correcting-an-invoice-with-a-credit-note">Correcting an invoice with a credit note</a></h1>
+<p>In the EU an invoice you have sent must not be edited or deleted. To correct it,
+issue a credit note that refers to it and reverses all or part of it, then (if
+needed) a new invoice with the right amounts.</p>
+<h2 id="create-the-credit-note"><a class="header" href="#create-the-credit-note">Create the credit note</a></h2>
+<pre><code class="language-sh">invgen new --credit EINV-2026-20
+# ~/Documents/Invoices/CN-2026-01.md
+</code></pre>
+<p>invgen finds invoice <code>EINV-2026-20</code> in your invoice library and writes the next
+credit note, prefilled from it:</p>
+<pre><code class="language-markdown">---
+kind: credit_note
+number: CN-2026-01
+date: 2026-11-02
+refers_to: EINV-2026-20
+refers_to_date: 2026-10-01
+status: pending
+client: northwind
+---
+
+| Description              | Qty | Unit | Rate   |
+|--------------------------|-----|------|--------|
+| Senior Software Engineer | 21  | days | 450.00 |
+</code></pre>
+<p>The client, currency, tax rate and any other front matter of the invoice are
+kept; number, dates and status are new. Add <code>--open</code> to edit it right away.</p>
+<h2 id="credit-only-part-of-the-invoice"><a class="header" href="#credit-only-part-of-the-invoice">Credit only part of the invoice</a></h2>
+<p>Delete the lines you do not want to credit, or lower their quantity. For two days
+billed by mistake, keep one line with <code>2</code> days. <strong>Keep quantities and rates
+positive</strong>: the credit note itself counts as negative.</p>
+<h2 id="what-it-looks-like"><a class="header" href="#what-it-looks-like">What it looks like</a></h2>
+<p>The PDF is titled <strong>Credit note</strong> (translated with the invoice language) and says
+“Refers to invoice EINV-2026-20 of October 1, 2026” under the title. Line totals,
+subtotal, tax and total are shown as negative amounts, for example <code>EUR -900.00</code>.</p>
+<p><code>invgen list</code> shows the credit note with its negative total, marked
+<code>credit note for EINV-2026-20</code>, and subtracts it from the yearly totals.</p>
+<h2 id="numbering"><a class="header" href="#numbering">Numbering</a></h2>
+<p>Credit notes have their own sequence, <code>CN-&lt;year&gt;-&lt;seq&gt;</code>. Change the prefix with
+<code>credit_prefix</code> in the config. Creating a credit note never uses up an invoice
+number, and the other way round.</p>
+<h2 id="writing-one-by-hand"><a class="header" href="#writing-one-by-hand">Writing one by hand</a></h2>
+<p>Any invoice file becomes a credit note with <code>kind: credit_note</code> and
+<code>refers_to: &lt;invoice number&gt;</code>. <code>refers_to_date</code> is optional: when it is missing,
+invgen looks up the date of that invoice in your library. Without <code>number:</code>, the
+next credit note number is used. A credit note has no due date unless you write
+<code>due</code> or <code>due_days</code>. See the <a href="#credit-notes">invoice format</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="keeping-invoices-in-git"><a class="header" href="#keeping-invoices-in-git">Keeping invoices in git</a></h1>
 <p>Invoices are small text files, so a git repository gives you history, backups
