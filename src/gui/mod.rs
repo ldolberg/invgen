@@ -1,12 +1,16 @@
 //! Native editor with live PDF preview. OWNER: gui agent.
 
+mod clients;
+mod forms;
 mod highlight;
 mod library;
+mod onboarding;
 mod theme;
 mod view;
 mod worker;
 
-use crate::config::Config;
+use crate::config::{Config, DEFAULT_CONFIG};
+use crate::config_edit::{self, EditError};
 use crate::model::Invoice;
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers, TextureHandle, Vec2};
 use library::{Entry, FsWatch, Scanner};
@@ -120,7 +124,8 @@ pub struct Toast {
 /// An action that would discard unsaved changes.
 #[derive(Clone)]
 pub enum Pending {
-    New,
+    /// A new untitled invoice, for this client key (None: the first client).
+    New(Option<String>),
     Open(PathBuf),
     Close,
 }
@@ -139,6 +144,14 @@ pub struct Page {
 
 pub struct App {
     cfg: Arc<Config>,
+    /// Where the config lives (`--config`, `INVGEN_CONFIG` or the default).
+    config_path: PathBuf,
+    /// Reload the config at this time (it changed on disk).
+    config_due: Option<Instant>,
+    /// First-run form, while there is no config file.
+    onboarding: Option<onboarding::Form>,
+    clients: clients::Panel,
+    clients_open: bool,
     pub prefs: Prefs,
 
     path: Option<PathBuf>,
@@ -202,14 +215,23 @@ impl App {
             }
             Err(_) => Config::default(),
         };
+        let config_path = config.map(Path::to_path_buf).unwrap_or_else(Config::path);
+        // Absolute, so file watcher events can be matched against it.
+        let config_path = std::path::absolute(&config_path).unwrap_or(config_path);
+        let onboarding = (!config_path.exists()).then(onboarding::Form::default);
         let cfg = Arc::new(cfg);
         let (dialog_tx, dialog_rx) = channel();
 
         let mut app = App {
             worker: Worker::spawn(cfg.clone(), ctx.clone()),
-            scanner: Scanner::spawn(cfg.clone(), ctx.clone()),
+            scanner: Scanner::spawn(ctx.clone()),
             watch: FsWatch::new(ctx.clone()),
+            clients: clients::Panel::new(&cfg),
+            clients_open: false,
             cfg,
+            config_path,
+            config_due: None,
+            onboarding,
             prefs,
             path: None,
             text: String::new(),
@@ -244,10 +266,10 @@ impl App {
             Some(p) if p.is_file() => app.load_file(&p),
             Some(p) => {
                 // A path that does not exist yet: start a new invoice that saves there.
-                app.new_document();
+                app.new_document(None);
                 app.path = Some(p);
             }
-            None => app.new_document(),
+            None => app.new_document(None),
         }
         app.update_watches();
         app
@@ -332,8 +354,9 @@ impl App {
         }
     }
 
-    fn new_document(&mut self) {
-        let text = std::panic::catch_unwind(|| self.cfg.new_invoice_markdown(None))
+    fn new_document(&mut self, client: Option<&str>) {
+        let client = client.filter(|k| self.cfg.clients.contains_key(*k));
+        let text = std::panic::catch_unwind(|| self.cfg.new_invoice_markdown(client))
             .unwrap_or_else(|_| FALLBACK_TEMPLATE.to_string());
         // Untitled and dirty, so closing asks before throwing it away.
         self.set_document(None, text, String::new());
@@ -344,7 +367,181 @@ impl App {
         if let Some(parent) = self.path.as_ref().and_then(|p| p.parent()) {
             dirs.push(parent.to_path_buf());
         }
+        // The config's folder, to pick up edits made in a text editor.
+        if let Some(parent) = self.config_path.parent() {
+            dirs.push(parent.to_path_buf());
+        }
         self.watch.set_dirs(&dirs);
+    }
+
+    // ---------------------------------------------------------------- config
+
+    /// Read the config file again and hand it to the preview and the library.
+    fn reload_config(&mut self) {
+        if !self.config_path.exists() {
+            return;
+        }
+        let cfg = match Config::load_from(&self.config_path) {
+            Ok(c) => c,
+            Err(e) => {
+                self.toast(ToastKind::Error, format!("Config error: {e:#}"));
+                return;
+            }
+        };
+        let cfg = Arc::new(cfg);
+        self.cfg = cfg.clone();
+        self.worker.send(Job::Config(cfg));
+        self.clients.refresh(&self.cfg);
+        self.library_due = Some(Instant::now());
+        self.update_watches();
+        self.text_changed(true);
+    }
+
+    /// Apply `change` to the current config text and write it back (atomic,
+    /// with a `.bak`), then reload. The file is read fresh every time, so
+    /// edits made meanwhile in a text editor are not lost.
+    fn edit_config(
+        &mut self,
+        change: impl FnOnce(&str) -> Result<String, EditError>,
+    ) -> Result<(), EditError> {
+        let text = match std::fs::read_to_string(&self.config_path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e.into()),
+        };
+        let new = change(&text)?;
+        if new != text {
+            config_edit::write_atomic(&self.config_path, &new)?;
+        }
+        self.reload_config();
+        Ok(())
+    }
+
+    pub fn open_config_file(&mut self) {
+        if !self.config_path.exists()
+            && let Err(e) = config_edit::write_atomic(&self.config_path, DEFAULT_CONFIG)
+        {
+            self.toast(ToastKind::Error, format!("Cannot write the config: {e}"));
+            return;
+        }
+        open_external(&self.config_path);
+        self.toast(
+            ToastKind::Info,
+            format!(
+                "Opened {} (changes apply when you save it)",
+                tilde(&self.config_path)
+            ),
+        );
+    }
+
+    pub fn open_clients(&mut self) {
+        if !self.clients_open {
+            self.clients.on_open(&self.cfg);
+        }
+        self.clients_open = true;
+    }
+
+    fn handle_clients(&mut self, action: clients::Action) {
+        match action {
+            clients::Action::Save {
+                original,
+                key,
+                client,
+            } => {
+                let res = self.edit_config(|text| {
+                    config_edit::upsert_client(text, original.as_deref(), &key, &client)
+                });
+                match res {
+                    Ok(()) => {
+                        let cfg = self.cfg.clone();
+                        self.clients.select_in(&cfg, Some(&key));
+                        self.toast(ToastKind::Success, format!("Saved client {key}"));
+                    }
+                    Err(e) => self.clients_problem(e),
+                }
+            }
+            clients::Action::Delete(key) => {
+                match self.edit_config(|text| config_edit::delete_client(text, &key)) {
+                    Ok(()) => {
+                        let cfg = self.cfg.clone();
+                        let first = cfg.clients.keys().next().map(String::as_str);
+                        self.clients.select_in(&cfg, first);
+                        self.toast(ToastKind::Success, format!("Deleted client {key}"));
+                    }
+                    Err(e) => self.clients_problem(e),
+                }
+            }
+            clients::Action::NewInvoice(key) => self.request(Pending::New(Some(key))),
+            clients::Action::OpenConfig => self.open_config_file(),
+        }
+    }
+
+    fn clients_problem(&mut self, e: EditError) {
+        let unsupported = matches!(e, EditError::Unsupported(_));
+        let msg = if unsupported {
+            format!("invgen cannot safely edit this config: {e}.")
+        } else {
+            format!("Not saved: {e}")
+        };
+        self.clients.problem = Some((msg, unsupported));
+    }
+
+    fn handle_onboarding(&mut self, outcome: onboarding::Outcome) {
+        match outcome {
+            onboarding::Outcome::Skip => {
+                if let Err(e) = config_edit::write_atomic(&self.config_path, DEFAULT_CONFIG) {
+                    if let Some(f) = self.onboarding.as_mut() {
+                        f.error = Some(format!("Cannot write {}: {e}", tilde(&self.config_path)));
+                    }
+                    return;
+                }
+                self.onboarding = None;
+                self.reload_config();
+                open_external(&self.config_path);
+                self.toast(
+                    ToastKind::Info,
+                    format!(
+                        "Wrote {}. Fill it in; the editor picks up your changes when you save.",
+                        tilde(&self.config_path)
+                    ),
+                );
+            }
+            onboarding::Outcome::Create(setup) => {
+                let written = setup.render().and_then(|text| {
+                    config_edit::write_atomic(&self.config_path, &text).map_err(EditError::from)
+                });
+                if let Err(e) = written {
+                    if let Some(f) = self.onboarding.as_mut() {
+                        f.error = Some(format!("Could not write the config: {e}"));
+                    }
+                    return;
+                }
+                self.onboarding = None;
+                self.reload_config();
+                // Keep a file the user opened explicitly; otherwise start the first invoice.
+                if self.path.is_some() {
+                    self.toast(ToastKind::Success, "Config saved");
+                    return;
+                }
+                match self.cfg.write_new_invoice(Some(&setup.client_key)) {
+                    Ok(path) => {
+                        self.load_file(&path);
+                        self.library_due = Some(Instant::now());
+                        self.toast(
+                            ToastKind::Success,
+                            format!(
+                                "All set. Created {}: check the line items, then Export PDF.",
+                                file_name(&path)
+                            ),
+                        );
+                    }
+                    Err(e) => {
+                        self.new_document(Some(&setup.client_key));
+                        self.toast(ToastKind::Error, format!("Config saved, but {e:#}"));
+                    }
+                }
+            }
+        }
     }
 
     /// Run `action` now, or ask first when it would drop unsaved changes.
@@ -358,7 +555,7 @@ impl App {
 
     fn perform(&mut self, action: Pending) {
         match action {
-            Pending::New => self.new_document(),
+            Pending::New(client) => self.new_document(client.as_deref()),
             Pending::Open(p) => self.load_file(&p),
             Pending::Close => {
                 self.allow_close = true;
@@ -664,6 +861,11 @@ impl App {
 
         // External file changes.
         let changed = self.watch.poll();
+        if changed.iter().any(|p| {
+            p.file_name() == self.config_path.file_name() && p.parent() == self.config_path.parent()
+        }) {
+            self.config_due = Some(Instant::now() + Duration::from_millis(300));
+        }
         if !changed.is_empty() {
             let inv_dir = std::fs::canonicalize(&self.cfg.invoices_dir)
                 .unwrap_or_else(|_| self.cfg.invoices_dir.clone());
@@ -699,10 +901,19 @@ impl App {
         }
 
         let now = Instant::now();
+        if let Some(due) = self.config_due {
+            if now >= due {
+                self.config_due = None;
+                self.reload_config();
+            } else {
+                ctx.request_repaint_after(due - now);
+            }
+        }
         if let Some(due) = self.library_due {
             if now >= due {
                 self.library_due = None;
-                self.scanner.request(self.cfg.invoices_dir.clone());
+                self.scanner
+                    .request(self.cfg.invoices_dir.clone(), self.cfg.clone());
             } else {
                 ctx.request_repaint_after(due - now);
             }
@@ -750,7 +961,7 @@ impl App {
             self.export(None);
         }
         if sc(cmd, Key::N) {
-            self.request(Pending::New);
+            self.request(Pending::New(None));
         }
         if sc(cmd, Key::O) {
             self.open_dialog();

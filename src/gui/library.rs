@@ -79,21 +79,22 @@ fn seq(number: &str) -> u64 {
 
 /// Scans the library off the UI thread.
 pub struct Scanner {
-    tx: Sender<PathBuf>,
+    tx: Sender<(PathBuf, Arc<Config>)>,
     rx: Receiver<Vec<Entry>>,
 }
 
 impl Scanner {
-    pub fn spawn(cfg: Arc<Config>, ctx: egui::Context) -> Scanner {
-        let (tx, job_rx) = channel::<PathBuf>();
+    pub fn spawn(ctx: egui::Context) -> Scanner {
+        let (tx, job_rx) = channel::<(PathBuf, Arc<Config>)>();
         let (out_tx, rx) = channel();
         std::thread::Builder::new()
             .name("invgen-library".into())
             .spawn(move || {
-                while let Ok(mut dir) = job_rx.recv() {
-                    while let Ok(d) = job_rx.try_recv() {
-                        dir = d;
+                while let Ok(mut job) = job_rx.recv() {
+                    while let Ok(newer) = job_rx.try_recv() {
+                        job = newer;
                     }
+                    let (dir, cfg) = job;
                     if out_tx.send(scan(&dir, &cfg)).is_err() {
                         return;
                     }
@@ -104,8 +105,9 @@ impl Scanner {
         Scanner { tx, rx }
     }
 
-    pub fn request(&self, dir: PathBuf) {
-        let _ = self.tx.send(dir);
+    /// Scan `dir`, parsing invoices against `cfg`.
+    pub fn request(&self, dir: PathBuf, cfg: Arc<Config>) {
+        let _ = self.tx.send((dir, cfg));
     }
 
     pub fn poll(&self) -> Option<Vec<Entry>> {

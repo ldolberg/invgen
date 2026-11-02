@@ -149,3 +149,14 @@ Sequence numbers are global and monotonically increasing across years
 padded or not (`EINV-2025-1`, `EINV-2025-02`), takes the highest N of any year plus one
 and formats it with at least two digits: `EINV-2026-01` for an empty directory.
 `~` in `invoices_dir` is expanded; the default is `~/Documents/Invoices`.
+
+The editor's first-run setup and its Clients window write to this file in place:
+only the lines of the keys they change are rewritten (a key's trailing `# comment`
+is kept), new keys go at the end of their block, and everything else stays byte for
+byte. They write values in the same style as above (plain scalars, quoted when
+YAML would read them as something else, lists as `[a, b]`). Client keys must be
+plain YAML keys: letters, digits, `-`, `_` and `.`, starting with a letter or digit.
+Before writing, the result is parsed again and checked; the previous file is kept as
+`config.yaml.bak`. Files the editor cannot change safely (flow mappings like
+`clients: {acme: {...}}`, anchors and aliases, tags, several documents) are never
+rewritten; edit those by hand.
