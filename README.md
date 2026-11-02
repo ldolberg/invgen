@@ -69,10 +69,11 @@ client: northwind
 Any other paragraph becomes a note under the table.
 ```
 
-Front matter holds the metadata (`client:` points into the config), the first A `config:` block overrides any config key for one invoice (see the format doc).
+Front matter holds the metadata (`client:` points into the config), the first
 table holds the line items, and loose paragraphs become notes. List items
 (`- Consulting: 21 days @ 450`) work instead of a table. Full spec:
-[docs/FORMAT.md](docs/FORMAT.md).
+[docs/FORMAT.md](docs/FORMAT.md). A `config:` block in the front matter overrides
+any config key for a single invoice.
 
 ## Keyboard shortcuts
 
