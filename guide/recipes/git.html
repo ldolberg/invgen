@@ -35,7 +35,7 @@
             const path_to_root = "../";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "../searchindex-b58be84b.js";
+            window.path_to_searchindex_js = "../searchindex-43af503e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="../toc-c6fff20e.js"></script>
@@ -215,12 +215,23 @@ folders work:</p>
 the editor sidebar lists only that top level, so move older years into their
 folders once they are closed.</p>
 <h2 id="check-before-committing"><a class="header" href="#check-before-committing">Check before committing</a></h2>
-<p><code>invgen list</code> exits with status 1 when any invoice fails to parse, so it works as
-a pre-commit check:</p>
-<pre><code class="language-sh"># .git/hooks/pre-commit (make it executable)
-#!/bin/sh
-exec invgen list &gt;/dev/null
+<p><code>invgen check</code> exits with status 1 when an invoice fails to parse, a number is
+used twice, or a higher number is dated before a lower one, so it works as a
+pre-commit hook:</p>
+<pre><code class="language-sh">#!/bin/sh
+# .git/hooks/pre-commit (make it executable: chmod +x .git/hooks/pre-commit)
+exec invgen check
 </code></pre>
+<p>Use <code>invgen check --strict</code> to also block commits on warnings, such as a gap in
+the numbering or a sender without tax lines. If your config lives outside the
+repository, set <code>INVGEN_CONFIG</code> in the hook (hooks do not read your shell
+profile):</p>
+<pre><code class="language-sh">#!/bin/sh
+export INVGEN_CONFIG="$HOME/Documents/Invoices/config.yaml"
+exec invgen check --strict
+</code></pre>
+<p>Note that the hook checks the files in the working tree, not only what is
+staged.</p>
 <h2 id="commit-messages-that-tell-the-story"><a class="header" href="#commit-messages-that-tell-the-story">Commit messages that tell the story</a></h2>
 <p>A commit per event keeps <code>git log</code> readable as a ledger:</p>
 <pre><code class="language-sh">git add EINV-2026-23.md &amp;&amp; git commit -m "Issue EINV-2026-23 (Northwind, October)"

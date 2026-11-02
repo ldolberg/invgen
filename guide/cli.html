@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-b58be84b.js";
+            window.path_to_searchindex_js = "searchindex-43af503e.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -256,18 +256,83 @@ Ctrl+C. The config is read again on every rebuild, so config edits are picked
 up too. A failed build prints the error and keeps watching. <code>-o</code> works as in
 <code>build</code>. See the <a href="recipes/watch.html">watch mode recipe</a>.</p>
 <h2 id="invgen-list"><a class="header" href="#invgen-list"><code>invgen list</code></a></h2>
-<p>Prints a table of all invoices in <code>invoices_dir</code> (and up to two levels of
+<pre><code class="language-text">invgen list [--year YYYY] [--client KEY|NAME] [--status STATUS]... [--unpaid] [--format table|csv|json]
+</code></pre>
+<p>Prints a table of the invoices in <code>invoices_dir</code> (and up to two levels of
 subfolders), in issue order:</p>
 <pre><code class="language-text">NUMBER        DATE        CLIENT                     TOTAL  STATUS
-EINV-2026-20  2026-07-01  Northwind Labs SL  EUR 10,350.00  pending
-EINV-2026-21  2026-08-01  Northwind Labs SL   EUR 9,450.00  pending
+EINV-2026-20  2026-07-01  Northwind Labs SL  EUR 10,350.00  overdue 94d
+EINV-2026-21  2026-08-01  Northwind Labs SL   EUR 9,450.00  overdue 63d
 EINV-2026-22  2026-10-01  Northwind Labs SL  EUR 12,450.90  paid
 2026 total                                   EUR 32,250.90
+
+OUTSTANDING  NOT DUE YET  1-30 DAYS  31-60 DAYS   61+ DAYS      TOTAL
+EUR                 0.00       0.00        0.00  19,800.00  19,800.00
 </code></pre>
-<p>After each year it prints that year’s total, one line per currency. Files that
-fail to parse are reported as <code>skipped:</code> with their error, and the command then
-exits with status 1 (after printing the table), which makes it usable as a check
-in scripts.</p>
+<p>After each year it prints that year’s total, one line per currency. Below the
+table comes the outstanding balance: the total of the invoices whose
+<a href="format.html">effective status</a> is <code>pending</code> or <code>overdue</code>, per currency, split by
+days past the due date (not due yet, 1-30, 31-60, 61 or more). Invoices without
+a due date count as not due yet. Drafts and paid invoices are not outstanding.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th>Option</th><th>Meaning</th></tr>
+</thead>
+<tbody>
+<tr><td><code>--year YYYY</code></td><td>Only invoices dated in that year.</td></tr>
+<tr><td><code>--client KEY|NAME</code></td><td>Only one client: a client key from the config, or part of the client name. Case-insensitive.</td></tr>
+<tr><td><code>--status STATUS</code></td><td>Only invoices with that effective status: <code>pending</code>, <code>paid</code>, <code>overdue</code> or <code>draft</code>. Repeat it to allow several (<code>--status pending --status overdue</code>).</td></tr>
+<tr><td><code>--unpaid</code></td><td>Only unpaid invoices, the same as <code>--status pending --status overdue</code>.</td></tr>
+<tr><td><code>--format FORMAT</code></td><td><code>table</code> (default), <code>csv</code> or <code>json</code>. See <a href="#export">Export</a>.</td></tr>
+</tbody>
+</table>
+</div>
+<p>Filters combine: <code>invgen list --year 2026 --client northwind --unpaid</code> shows
+what Northwind still owes for 2026. The yearly totals and the outstanding
+balance only count the invoices shown.</p>
+<p>Files that fail to parse are reported on stderr as <code>skipped:</code> with their error,
+and the command then exits with status 1 (after printing the table), which
+makes it usable as a check in scripts.</p>
+<h3 id="export"><a class="header" href="#export">Export</a></h3>
+<p><code>--format csv</code> writes RFC 4180 CSV with a header row; <code>--format json</code> writes a
+JSON array with the same fields plus the line items. Amounts are exact decimal
+strings with two decimals (<code>9450.00</code>), never floating point numbers. Only the
+data goes to stdout, so it can be piped or redirected:</p>
+<pre><code class="language-sh">invgen list --year 2026 --format csv &gt; invoices-2026.csv
+invgen list --unpaid --format json | jq -r '.[] | "\(.number) \(.total)"'
+</code></pre>
+<p>The fields are documented in
+<a href="https://github.com/ldolberg/invgen/blob/main/docs/EXPORT.md">docs/EXPORT.md</a>.</p>
+<h2 id="invgen-check---strict"><a class="header" href="#invgen-check---strict"><code>invgen check [--strict]</code></a></h2>
+<p>Scans the library and reports problems that matter for bookkeeping, compiler
+style, one per line:</p>
+<pre><code class="language-text">invoices/EINV-2026-23.md:2: error: duplicate number EINV-2026-23 (also in invoices/2026/EINV-2026-23.md)
+invoices/EINV-2026-27.md:2: warning: gap in the EINV sequence before EINV-2026-27: 25-26 missing
+invoices/EINV-2026-28.md:3: error: EINV-2026-28 is dated 2026-09-01, before the lower number EINV-2026-27 (2026-10-01)
+28 invoice(s) checked: 2 error(s), 1 warning(s)
+</code></pre>
+<p>Errors:</p>
+<ul>
+<li>a file that fails to parse;</li>
+<li>a duplicate number, or the same sequence number used twice under one prefix
+(sequences are global across years, so <code>EINV-2025-5</code> and <code>EINV-2026-05</code> collide);</li>
+<li>a higher number dated before a lower one (drafts are ignored here);</li>
+<li>an invoice whose client has no name.</li>
+</ul>
+<p>Warnings:</p>
+<ul>
+<li>a gap in the sequence of a prefix (between its lowest and highest number); a
+number that only exists as a PDF in the library fills its place;</li>
+<li>an invoice without <code>number:</code> in its front matter (it gets an automatic one
+each time it is parsed, so it is left out of the sequence checks);</li>
+<li>a number that does not look like <code>PREFIX-YYYY-N</code>, or whose year differs from
+the invoice date;</li>
+<li>a sender without tax lines (<code>from: tax:</code>).</li>
+</ul>
+<p>It exits with status 0 when there are no errors and 1 otherwise. Warnings alone
+do not fail, unless <code>--strict</code> is given. See the
+<a href="recipes/git.html#check-before-committing">pre-commit hook recipe</a>.</p>
 <h2 id="invgen-config---edit"><a class="header" href="#invgen-config---edit"><code>invgen config [--edit]</code></a></h2>
 <p>Prints the path of the config file in use. If the file does not exist, it is
 created first with commented placeholders.</p>
@@ -288,7 +353,8 @@ replaced with <code>--force</code>. The data a template receives is documented i
 <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <p><code>0</code> on success, <code>1</code> on any error (bad arguments, unreadable files, a parse error,
-a skipped file in <code>list</code>, an invalid config after <code>config --edit</code>).</p>
+a skipped file in <code>list</code>, problems found by <code>check</code>, an invalid config after
+<code>config --edit</code>).</p>
 
                     </main>
 
