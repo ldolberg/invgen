@@ -64,6 +64,7 @@ impl ClientForm {
             description: setup::opt(&self.description),
             language: None,
             tax_note: None,
+            format: Default::default(),
         }
     }
 }

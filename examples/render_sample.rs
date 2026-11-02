@@ -75,6 +75,7 @@ fn base() -> Invoice {
         language: "en".into(),
         labels: Default::default(),
         template: None,
+        format: Default::default(),
     }
 }
 

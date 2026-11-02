@@ -48,6 +48,7 @@ fn sample() -> Invoice {
         language: "en".into(),
         labels: Default::default(),
         template: None,
+        format: Default::default(),
     }
 }
 
@@ -166,7 +167,13 @@ fn every_language_renders_its_labels() {
         inv.language = lang.to_string();
         inv.status = Status::Overdue;
         let c = r.compile(&inv).unwrap();
-        let text = doc_text(&c);
+        // A label may wrap next to a long localized date: join the lines
+        // (only plain spaces, the no-break spaces of amounts stay).
+        let text = doc_text(&c)
+            .split(' ')
+            .filter(|w| !w.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
         let labels = i18n::labels(lang, &Default::default());
         for key in ["invoice_date", "due_date", "subtotal", "total_due"] {
             assert!(
@@ -179,10 +186,76 @@ fn every_language_renders_its_labels() {
             let up = labels[key].to_uppercase();
             assert!(text.contains(&up), "{lang}: {key} ({up}) missing in {text}");
         }
-        // Dates and money keep their current format in every language.
-        assert!(text.contains("November 1, 2026"), "{lang}: {text}");
-        assert!(text.contains("EUR 9,450.00"), "{lang}: {text}");
+        // Dates and amounts follow the language.
+        let (date, total) = match *lang {
+            "en" => ("November 1, 2026", "EUR 9,450.00"),
+            "es" => ("1 de noviembre de 2026", "9.450,00\u{a0}€"),
+            "de" => ("1. November 2026", "9.450,00\u{a0}€"),
+            "fr" => ("1 novembre 2026", "9\u{202f}450,00\u{a0}€"),
+            "it" => ("1 novembre 2026", "9.450,00\u{a0}€"),
+            "pt" => ("1 de novembro de 2026", "9\u{a0}450,00\u{a0}€"),
+            "nl" => ("1 november 2026", "€\u{a0}9.450,00"),
+            other => panic!("no expectation for {other}"),
+        };
+        assert!(text.contains(date), "{lang}: {date} missing in {text}");
+        assert!(text.contains(total), "{lang}: {total} missing in {text}");
     }
+}
+
+/// The view model for a default (English) invoice uses exactly the strings
+/// of the fixed CLI format, so English PDFs are unchanged by locales.
+#[test]
+fn english_data_is_the_historical_format() {
+    use crate::model::{format_amount, format_date, format_money};
+    let mut inv = sample();
+    inv.tax_rate = "7.5".parse().unwrap();
+    inv.items[0].quantity = "1234.5".parse().unwrap();
+    let v = serde_json::to_value(data::View::new(&inv, None)).unwrap();
+    assert_eq!(v["locale"], "en");
+    assert_eq!(v["date"], format_date(inv.date));
+    assert_eq!(v["due"], format_date(inv.due.unwrap()));
+    assert_eq!(v["date"], "November 1, 2026");
+    assert_eq!(v["total"], format_money("EUR", inv.total()));
+    assert_eq!(v["subtotal"], format_money("EUR", inv.subtotal()));
+    assert_eq!(v["tax"], format_money("EUR", inv.tax()));
+    assert_eq!(v["tax_rate"], "7.5%");
+    assert_eq!(v["items"][0]["qty"], "1234.5");
+    assert_eq!(v["items"][0]["rate"], format_amount(inv.items[0].rate));
+    assert_eq!(v["items"][0]["total"], "EUR 555,525.00");
+}
+
+#[test]
+fn locale_overrides_reach_the_pdf() {
+    use crate::model::{CurrencyPosition, CurrencyStyle, NumberFormat};
+    let r = Renderer::new().unwrap();
+    let mut inv = sample();
+    inv.language = "en".into();
+    inv.currency = "CHF".into();
+    inv.tax_rate = "7.7".parse().unwrap();
+    inv.items[0].quantity = "20.5".parse().unwrap();
+    inv.format.locale = Some("de-CH".into());
+    let text = doc_text(&r.compile(&inv).unwrap());
+    // English labels, Swiss numbers and German month names.
+    assert!(text.contains("Total due"), "{text}");
+    assert!(text.contains("CHF\u{a0}9\u{2019}225.00"), "{text}");
+    assert!(text.contains("20.5"), "{text}");
+    assert!(text.contains("1. November 2026"), "{text}");
+
+    inv.format.number_format = NumberFormat {
+        thousands: Some(" ".into()),
+        decimal: Some(",".into()),
+        currency: Some(CurrencyStyle::Code),
+        currency_position: Some(CurrencyPosition::After),
+    };
+    inv.format.date_format = Some("%d.%m.%Y".into());
+    let text = doc_text(&r.compile(&inv).unwrap());
+    assert!(text.contains("9 225,00\u{a0}CHF"), "{text}");
+    assert!(text.contains("20,5"), "{text}");
+    assert!(text.contains("7,7%"), "{text}");
+    assert!(
+        text.contains("01.11.2026") && text.contains("15.11.2026"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -312,7 +385,7 @@ fn custom_template_gets_the_data_and_its_own_files() {
         &tpl,
         "#import \"part.typ\": greet\n\
          #let d = json(\"/invoice.json\")\n\
-         #greet(d.to.name) v#d.contract_version #d.labels.bill_to #d.total\n\
+         #greet(d.to.name) v#d.contract_version #d.labels.bill_to #d.total #d.locale\n\
          #if d.logo != none { image(d.logo, height: 1cm) }\n",
     )
     .unwrap();
@@ -326,7 +399,7 @@ fn custom_template_gets_the_data_and_its_own_files() {
     assert!(text.contains("Northwind Labs SL"), "{text}");
     assert!(text.contains(&format!("v{CONTRACT_VERSION}")), "{text}");
     assert!(text.contains("Factuur aan"), "{text}");
-    assert!(text.contains("EUR 9,450.00"), "{text}");
+    assert!(text.contains("€\u{a0}9.450,00 nl"), "{text}");
     assert!(!text.contains("FACTUUR AAN"), "{text}");
     assert_eq!(image_count(&c), 1);
 }
@@ -473,7 +546,12 @@ fn multi_rate_breakdown_renders_in_two_languages() {
     assert!(!en.contains("VAT (21%)"), "{en}");
 
     let es = doc_text(&r.compile(&multi_rate("es")).unwrap());
-    for s in ["IVA 21%", "IVA 10%", "Base imponible EUR 1,200.00"] {
+    // Spanish formatting: decimal comma, `€` after the amount, `21 %`.
+    for s in [
+        "IVA 21\u{a0}%",
+        "IVA 10\u{a0}%",
+        "Base imponible 1.200,00\u{a0}€",
+    ] {
         assert!(es.contains(s), "`{s}` missing in {es}");
     }
 }

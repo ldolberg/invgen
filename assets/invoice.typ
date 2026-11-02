@@ -129,11 +129,12 @@
   }),
   {
     v(-4pt)
+    // Rows are 15pt; the empty third column is a strut that lets a row grow
+    // when a long label wraps (e.g. a long localized date beside it).
     grid(
-      columns: (1fr, auto),
-      rows: 15pt,
-      align: (left + horizon, right + horizon),
-      ..meta.flatten(),
+      columns: (1fr, auto, 0pt),
+      align: (left + horizon, right + horizon, left),
+      ..meta.map(r => (..r, box(height: 15pt))).flatten(),
     )
     v(9pt)
     line(length: 100%, stroke: 0.5pt + hair)
