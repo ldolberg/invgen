@@ -257,6 +257,15 @@ fn build(
     let Some(inv) = parse_file(cfg, file)? else {
         return Ok(None);
     };
+    if let Some(w) = inv.tax_note_warning() {
+        let st = Style::stderr();
+        eprintln!(
+            "{} {} {}",
+            st.bold(&format!("{}:", file.display())),
+            st.yellow("warning:"),
+            w
+        );
+    }
     let compiled = renderer
         .compile(&inv)
         .with_context(|| format!("rendering {}", file.display()))?;

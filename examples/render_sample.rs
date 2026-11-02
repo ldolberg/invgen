@@ -61,9 +61,11 @@ fn base() -> Invoice {
             quantity: Decimal::from(21),
             unit: "days".into(),
             rate: Decimal::from(450),
+            tax_rate: None,
         }],
         tax_rate: Decimal::ZERO,
         tax_label: "VAT".into(),
+        tax_note: None,
         notes: vec![
             "Reverse charge: VAT to be accounted for by the recipient (Art. 196, Directive 2006/112/EC).".into(),
             "Please include the invoice number as the transfer reference.".into(),
@@ -88,6 +90,7 @@ fn long() -> Invoice {
             quantity: Decimal::from(i % 5 + 1) * Decimal::new(15, 1),
             unit: "hours".into(),
             rate: Decimal::from(85 + i),
+            tax_rate: None,
         })
         .collect();
     inv
@@ -113,6 +116,7 @@ fn paid() -> Invoice {
         quantity: Decimal::from(2),
         unit: "days".into(),
         rate: Decimal::from(600),
+        tax_rate: None,
     });
     inv
 }

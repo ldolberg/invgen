@@ -27,6 +27,7 @@ number_prefix: EINV                  # numbers look like EINV-<year>-<seq>
 currency: EUR                        # default currency code
 tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
+# tax_note: exempt                   # optional: legal tax mention under the totals
 language: en                         # labels: en, es, de, fr, it, pt, nl
 labels:                              # optional: replace single labels
   bill_to: Customer
@@ -54,6 +55,7 @@ clients:
     email: billing@example.com
     currency: EUR                    # optional per-client defaults
     tax_rate: 0
+    tax_note: reverse_charge         # optional: EU B2B services without VAT
     language: es                     # optional: this client's invoices in Spanish
     rate: 450                        # used by the new-invoice template
     unit: days
@@ -65,14 +67,15 @@ clients:
 | `invoices_dir` | `~/Documents/Invoices` | Where `invgen new` and the editor create invoices, where `invgen list` and the editor sidebar look, and the folder scanned for the next number. |
 | `number_prefix` | `EINV` | Prefix of generated numbers. The starter file written by `invgen config` sets `INV`. |
 | `currency` | `EUR` | Currency code printed next to amounts. Any text works; invgen does not convert between currencies. |
-| `tax_rate` | `0` | Percent applied to the subtotal. |
+| `tax_rate` | `0` | Percent applied to the subtotal. Single lines can use another rate (a `Tax` column or `, tax 10%`), see [FORMAT.md](https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#body-rules). |
+| `tax_note` | none | Legal tax mention printed under the totals: `reverse_charge`, `exempt`, `outside_scope` (translated into the invoice language) or any free text. See [Tax notes](#tax-notes). |
 | `due_days` | `14` | Days from the invoice date to the due date. |
 | `language` | `en` | Language of every label on the invoice: `en`, `es`, `de`, `fr`, `it`, `pt`, `nl`. An unknown value is an error. Dates and amounts keep their format. |
 | `labels` | none | Map of label key to text, replacing single labels in any language (keys in [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels)). |
 | `template` | built-in | Path of a custom typst template. See [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md). |
 | `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`, `logo` (SVG or PNG shown top-left; a missing file is an error). |
 | `payment` | empty | `holder`, `iban`, `bic`, `notes` (list of lines). |
-| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `language`, `rate`, `unit`, `description`. |
+| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `tax_note`, `language`, `rate`, `unit`, `description`. |
 
 Unknown keys are ignored, so a typo in a key name does not raise an error. If a
 value does not show up on the invoice, check the spelling first.
@@ -82,7 +85,7 @@ against the folder of the config file.
 
 ## Precedence
 
-For each invoice, `currency`, `tax_rate` and `language` are taken from the first place that
+For each invoice, `currency`, `tax_rate`, `tax_note` and `language` are taken from the first place that
 sets them:
 
 1. the invoice front matter,
@@ -95,6 +98,26 @@ sets them:
 
 An invoice can also override any config key for itself with a `config:` block.
 See [Per-invoice overrides](recipes/overrides.md).
+
+## Tax notes
+
+Invoices without VAT usually need a legal mention. `tax_note` prints one under the
+totals; the presets are translated into every supported language:
+
+| Preset | English text |
+|---|---|
+| `reverse_charge` | Reverse charge: VAT to be accounted for by the recipient (Article 196 of Council Directive 2006/112/EC). |
+| `exempt` | Exempt from VAT. |
+| `outside_scope` | Outside the scope of VAT. |
+
+Any other value is printed as written, and `tax_note: false` in an invoice drops the
+client or config note. To reword a preset, override its label (`tax_note_exempt`,
+for example) under `labels:`. These are standard wordings, not legal advice; check
+what your jurisdiction requires.
+
+`invgen build` prints a warning (and the editor shows a notice after export) when an
+invoice charges no tax, has no `tax_note` and the client has `tax` lines. That is the
+typical cross-border B2B case that needs the reverse charge mention.
 
 ## Invoice numbers
 

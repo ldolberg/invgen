@@ -837,6 +837,12 @@ impl App {
                             });
                             self.last_export = Some(p);
                             self.library_due = Some(Instant::now());
+                            // Non-blocking: the PDF is written either way.
+                            if let Some(w) =
+                                self.invoice.as_ref().and_then(Invoice::tax_note_warning)
+                            {
+                                self.toast(ToastKind::Info, format!("Note: {w}"));
+                            }
                         }
                         Err(e) => self.toast(ToastKind::Error, format!("Export failed: {e}")),
                     }
