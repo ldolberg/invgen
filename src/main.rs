@@ -73,6 +73,16 @@ enum Cmd {
         #[arg(long)]
         edit: bool,
     },
+    /// Work with typst templates (see docs/TEMPLATES.md).
+    Template {
+        /// Write the built-in template to PATH (stdout when PATH is omitted),
+        /// as a starting point for a custom `template:`.
+        #[arg(long, value_name = "PATH", num_args = 0..=1, required = true)]
+        export: Option<Option<PathBuf>>,
+        /// Overwrite PATH if it already exists.
+        #[arg(long)]
+        force: bool,
+    },
 }
 
 fn main() -> ExitCode {
@@ -114,6 +124,7 @@ fn run(cli: Cli) -> Result<ExitCode> {
             cmd_list(&cfg)
         }
         Some(Cmd::Config { edit }) => cmd_config(config_path.as_deref(), edit),
+        Some(Cmd::Template { export, force }) => cmd_template(export.flatten().as_deref(), force),
     }
 }
 
@@ -473,6 +484,27 @@ fn seq_of(number: &str) -> u64 {
         .unwrap_or(0)
 }
 
+fn cmd_template(path: Option<&Path>, force: bool) -> Result<ExitCode> {
+    let Some(path) = path else {
+        print!("{}", invgen::render::TEMPLATE);
+        return Ok(ExitCode::SUCCESS);
+    };
+    if path.exists() && !force {
+        bail!(
+            "{} already exists (use --force to overwrite)",
+            path.display()
+        );
+    }
+    if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(path, invgen::render::TEMPLATE)
+        .with_context(|| format!("writing {}", path.display()))?;
+    println!("{}", path.display());
+    Ok(ExitCode::SUCCESS)
+}
+
 const DEFAULT_CONFIG: &str = r#"# invgen configuration. See docs/FORMAT.md for the invoice format.
 # Static data lives here once; invoice files only say what changes.
 
@@ -481,6 +513,10 @@ number_prefix: INV                   # numbers look like INV-<year>-<seq>
 currency: EUR
 tax_rate: 0                          # percent
 due_days: 14
+# language: en                       # labels: en, es, de, fr, it, pt, nl
+# labels:                            # override single labels
+#   bill_to: Customer
+# template: my-invoice.typ           # custom typst template (`invgen template --export`)
 
 from:
   name: Your Name
@@ -488,6 +524,7 @@ from:
   tax: ["VAT ID: XX00000000"]
   email: you@example.com
   # phone: "+00 000 000 000"
+  # logo: logo.svg                   # SVG or PNG; relative to this file
 
 payment:
   holder: YOUR NAME
@@ -502,6 +539,7 @@ clients:
     tax: ["Tax ID: X00000000"]
     # currency: EUR      # optional per-client defaults
     # tax_rate: 0
+    # language: es
     rate: 450            # default rate used by `invgen new`
     unit: days
     description: Consulting services

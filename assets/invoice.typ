@@ -1,7 +1,11 @@
 // invgen invoice template.
 // All data comes from /invoice.json (pre-formatted strings), never from markup.
+// Every visible label comes from `d.labels` (translated in Rust), so this file
+// holds no language-specific text. The data contract is documented in
+// docs/TEMPLATES.md (`d.contract_version`).
 
 #let d = json("/invoice.json")
+#let t = d.labels
 
 // Palette
 #let ink = rgb("#111827")
@@ -18,7 +22,7 @@
   draft: (fg: rgb("#4b5563"), bg: rgb("#f3f4f6"), dot: rgb("#9ca3af")),
 )
 
-#set document(title: "Invoice " + d.number, author: d.from.name)
+#set document(title: t.invoice + " " + d.number, author: d.from.name)
 #set page(
   paper: "a4",
   margin: (x: 20mm, top: 20mm, bottom: 22mm),
@@ -29,12 +33,12 @@
       grid(
         columns: (1fr, auto),
         d.number,
-        [Page #counter(page).display() of #total],
+        t.page_of.replace("{page}", str(here().page())).replace("{total}", str(total)),
       )
     }
   },
 )
-#set text(font: "Inter", size: 8.75pt, fill: body)
+#set text(font: "Inter", size: 8.75pt, fill: body, lang: d.language)
 #let side = 66mm // width of the right-hand column, shared by both rows
 #set par(leading: 0.55em, spacing: 0.55em)
 
@@ -75,6 +79,15 @@
 )
 
 // ---------------------------------------------------------------- Header
+// The logo sits top-left, scaled to fit a 14mm x 60mm box (aspect kept).
+#if d.logo != none {
+  context {
+    let size = measure(image(d.logo))
+    let k = calc.min(14mm / size.height, 60mm / size.width)
+    image(d.logo, width: size.width * k, height: size.height * k)
+  }
+  v(10pt)
+}
 #grid(
   columns: (1fr, auto),
   align: (left + horizon, right + horizon),
@@ -83,7 +96,7 @@
     stroke: 0.6pt + accent,
     radius: 99pt,
     inset: (x: 12pt, y: 5.5pt),
-    text(size: 7.5pt, weight: "semibold", tracking: 0.32em, fill: accent, "INVOICE"),
+    text(size: 7.5pt, weight: "semibold", tracking: 0.32em, fill: accent, upper(t.invoice)),
   ),
 )
 
@@ -93,16 +106,16 @@
 #let sc = status-colors.at(d.status, default: status-colors.draft)
 #let meta-row(k, v) = (text(fill: muted, k), v)
 #let meta = (
-  meta-row("Invoice", text(weight: "medium", fill: ink, "#" + d.number)),
-  meta-row("Status", pill(d.status, sc.fg, sc.bg, dot: sc.dot)),
-  meta-row("Invoice date", text(fill: ink, d.date)),
+  meta-row(t.invoice, text(weight: "medium", fill: ink, "#" + d.number)),
+  meta-row(t.status, pill(d.status_label, sc.fg, sc.bg, dot: sc.dot)),
+  meta-row(t.invoice_date, text(fill: ink, d.date)),
 )
-#if d.due != none { meta.push(meta-row("Due date", text(fill: ink, d.due))) }
+#if d.due != none { meta.push(meta-row(t.due_date, text(fill: ink, d.due))) }
 
 #grid(
   columns: (1fr, side),
   column-gutter: 10mm,
-  section("Bill to", {
+  section(t.bill_to, {
     party(d.to)
     if d.to.tax.len() > 0 {
       v(6pt)
@@ -128,7 +141,7 @@
     grid(
       columns: (1fr, auto),
       align: (left + horizon, right + horizon),
-      label("Total amount"),
+      label(t.total_amount),
       text(size: 16pt, weight: "semibold", fill: accent, tracking: -0.01em, number-width: "tabular", d.total),
     )
   },
@@ -138,17 +151,17 @@
 
 // ------------------------------------------- From / Tax / Payment row
 #let cols = ()
-#cols.push(section("Bill from", {
+#cols.push(section(t.bill_from, {
   party(d.from)
 }))
 #if d.from.tax.len() > 0 {
-  cols.push(section("Tax details", text(fill: muted, lines(d.from.tax))))
+  cols.push(section(t.tax_details, text(fill: muted, lines(d.from.tax))))
 }
 #if d.payment.holder != none or d.payment.iban != none or d.payment.bic != none or d.payment.notes.len() > 0 {
-  cols.push(section("Payment method", {
+  cols.push(section(t.payment_method, {
     let p = d.payment
     if p.holder != none { text(weight: "medium", fill: ink, p.holder) }
-    let kv = (("IBAN", p.iban), ("BIC", p.bic)).filter(x => x.at(1) != none)
+    let kv = ((t.iban, p.iban), (t.bic, p.bic)).filter(x => x.at(1) != none)
     if kv.len() > 0 {
       if p.holder != none { v(4pt) }
       grid(
@@ -182,10 +195,10 @@
   inset: (x, y) => (left: if x == 0 { 0pt } else { 6pt }, right: 0pt, y: 8pt),
   stroke: (x, y) => if y == 0 { (bottom: 0.7pt + ink) } else { (bottom: 0.5pt + hair) },
   table.header(
-    th("Description"),
-    th("Qty (unit)", al: right),
-    th("Rate", al: right),
-    th("Total", al: right),
+    th(t.description),
+    th(t.qty_unit, al: right),
+    th(t.rate, al: right),
+    th(t.total, al: right),
   ),
   ..d.items.map(it => (
     {
@@ -212,7 +225,7 @@
     columns: (1fr, auto),
     inset: (x: 0pt, y: 5pt),
     align: (left, right),
-    text(fill: muted, "Subtotal"), num(d.subtotal),
+    text(fill: muted, t.subtotal), num(d.subtotal),
     text(fill: muted, d.tax_label + " (" + d.tax_rate + ")"), num(d.tax),
   )
   v(4pt)
@@ -224,7 +237,7 @@
     grid(
       columns: (1fr, auto),
       align: (left + horizon, right + horizon),
-      text(weight: "semibold", fill: ink, "Total due"),
+      text(weight: "semibold", fill: ink, t.total_due),
       text(size: 12pt, weight: "semibold", fill: accent, d.total),
     ),
   )
@@ -234,7 +247,7 @@
 #if d.notes.len() > 0 {
   v(22pt)
   block(width: 100%, breakable: true, {
-    label("Notes")
+    label(t.notes)
     v(5pt)
     set par(spacing: 0.8em)
     for n in d.notes { par(text(fill: muted, n)) }
@@ -253,7 +266,7 @@
     {
       let contact = (d.from.email, d.from.phone).filter(x => x != none)
       if contact.len() > 0 {
-        label("Contact")
+        label(t.contact)
         v(5pt)
         text(fill: body, lines(contact))
       }

@@ -33,6 +33,7 @@ fn base() -> Invoice {
             ],
             email: Some("alex@example.com".into()),
             phone: Some("+352 600 000 000".into()),
+            logo: None,
         },
         to: Party {
             name: "Northwind Labs SL".into(),
@@ -45,6 +46,7 @@ fn base() -> Invoice {
             tax: vec!["Tax ID: B12345678".into()],
             email: None,
             phone: None,
+            logo: None,
         },
         payment: Payment {
             holder: Some("ALEX MORGAN".into()),
@@ -67,6 +69,9 @@ fn base() -> Invoice {
         ],
         signature: Some("Alex Morgan".into()),
         accent: "#111827".into(),
+        language: "en".into(),
+        labels: Default::default(),
+        template: None,
     }
 }
 
@@ -93,6 +98,11 @@ fn paid() -> Invoice {
     inv.status = Status::Paid;
     inv.tax_rate = 21.0;
     inv.tax_label = "IVA".into();
+    inv.language = "es".into();
+    inv.from.logo = Some(PathBuf::from(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/examples/logo.svg"
+    )));
     inv.accent = "#0f766e".into();
     inv.due = None;
     inv.notes = vec![];
