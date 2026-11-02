@@ -37,6 +37,7 @@ language: en                         # labels: en, es, de, fr, it, pt, nl
 labels:                              # optional: replace single labels
   bill_to: Customer
 # template: my-invoice.typ           # optional: your own typst template
+# e_invoice: facturx                 # optional: facturx, ubl or [facturx, ubl]
 
 from:                                # you, printed as the sender
   name: Alex Morgan
@@ -83,9 +84,10 @@ clients:
 | `date_format` | locale | strftime pattern for dates on the PDF, e.g. `"%d.%m.%Y"`. Month and weekday names (`%B`, `%b`, `%A`, `%a`) are translated. |
 | `labels` | none | Map of label key to text, replacing single labels in any language (keys in [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels)). |
 | `template` | built-in | Path of a custom typst template. See [TEMPLATES.md](https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md). |
-| `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`, `logo` (SVG or PNG shown top-left; a missing file is an error). |
+| `e_invoice` | none | E-invoices written by every build and editor export: `facturx`, `ubl` or `[facturx, ubl]`. See [E-invoices](recipes/e-invoices.md). |
+| `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`, `logo` (SVG or PNG shown top-left; a missing file is an error). For e-invoices also `vat_id`, `legal_id`, `country`, `endpoint` (never printed). |
 | `payment` | empty | `holder`, `iban`, `bic`, `notes` (list of lines). |
-| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`) plus optional `currency`, `tax_rate`, `tax_note`, `language`, `locale`, `number_format`, `date_format`, `rate`, `unit`, `description`. The client's `email` is the recipient of [`invgen send`](cli.md#invgen-send-filenumber---dry-run---mark-sent). |
+| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`; for e-invoices `vat_id`, `legal_id`, `country`, `endpoint`, `buyer_reference`) plus optional `currency`, `tax_rate`, `tax_note`, `language`, `locale`, `number_format`, `date_format`, `rate`, `unit`, `description`. The client's `email` is the recipient of [`invgen send`](cli.md#invgen-send-filenumber---dry-run---mark-sent). |
 | `email` | per language | `subject` and `body` of the message `invgen send` prepares, with the placeholders `{number}`, `{total}`, `{due}`, `{client}`, `{from}`. |
 
 Unknown keys are ignored, so a typo in a key name does not raise an error. If a

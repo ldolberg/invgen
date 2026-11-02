@@ -99,6 +99,9 @@ Renders one invoice.
 | `-o`, `--output OUT.pdf` | Where to write the PDF. Default: `<number>.pdf` in the same folder as `FILE.md`. Missing parent folders are created. |
 | `--png DIR` | Also write a PNG of every page into `DIR` (144 dpi): `<number>.png`, or `<number>-1.png`, `<number>-2.png`, ... for multi-page invoices. |
 | `--strict` | Refuse to build an issued invoice whose content changed (exit status 1) instead of warning. |
+| `--facturx` | Write the PDF as Factur-X / ZUGFeRD: PDF/A-3b with the EN 16931 XML embedded. See [E-invoices](recipes/e-invoices.md). |
+| `--ubl` | Also write the UBL XML (Peppol BIS Billing 3.0) next to the PDF, with the PDF's name and `.xml`. |
+| `--no-e-invoice` | Ignore `e_invoice` from the config for this build. |
 
 On success it prints one line with the number, client, total and output path.
 On a parse error it prints the error and exits with status 1.
