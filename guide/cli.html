@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-39f425bb.js";
+            window.path_to_searchindex_js = "searchindex-829dc4aa.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f7992f4.js"></script>
+        <script src="toc-d8244cd5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -284,6 +284,9 @@ cannot be combined with <code>--client</code> or <code>--from</code>. See
 <tr><td><code>-o</code>, <code>--output OUT.pdf</code></td><td>Where to write the PDF. Default: <code>&lt;number&gt;.pdf</code> in the same folder as <code>FILE.md</code>. Missing parent folders are created.</td></tr>
 <tr><td><code>--png DIR</code></td><td>Also write a PNG of every page into <code>DIR</code> (144 dpi): <code>&lt;number&gt;.png</code>, or <code>&lt;number&gt;-1.png</code>, <code>&lt;number&gt;-2.png</code>, … for multi-page invoices.</td></tr>
 <tr><td><code>--strict</code></td><td>Refuse to build an issued invoice whose content changed (exit status 1) instead of warning.</td></tr>
+<tr><td><code>--facturx</code></td><td>Write the PDF as Factur-X / ZUGFeRD: PDF/A-3b with the EN 16931 XML embedded. See <a href="recipes/e-invoices.html">E-invoices</a>.</td></tr>
+<tr><td><code>--ubl</code></td><td>Also write the UBL XML (Peppol BIS Billing 3.0) next to the PDF, with the PDF’s name and <code>.xml</code>.</td></tr>
+<tr><td><code>--no-e-invoice</code></td><td>Ignore <code>e_invoice</code> from the config for this build.</td></tr>
 </tbody>
 </table>
 </div>

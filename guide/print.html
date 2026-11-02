@@ -36,10 +36,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-39f425bb.js";
+            window.path_to_searchindex_js = "searchindex-829dc4aa.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f7992f4.js"></script>
+        <script src="toc-d8244cd5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -368,6 +368,7 @@ language: en                         # labels: en, es, de, fr, it, pt, nl
 labels:                              # optional: replace single labels
   bill_to: Customer
 # template: my-invoice.typ           # optional: your own typst template
+# e_invoice: facturx                 # optional: facturx, ubl or [facturx, ubl]
 
 from:                                # you, printed as the sender
   name: Alex Morgan
@@ -417,9 +418,10 @@ clients:
 <tr><td><code>date_format</code></td><td>locale</td><td>strftime pattern for dates on the PDF, e.g. <code>"%d.%m.%Y"</code>. Month and weekday names (<code>%B</code>, <code>%b</code>, <code>%A</code>, <code>%a</code>) are translated.</td></tr>
 <tr><td><code>labels</code></td><td>none</td><td>Map of label key to text, replacing single labels in any language (keys in <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels">TEMPLATES.md</a>).</td></tr>
 <tr><td><code>template</code></td><td>built-in</td><td>Path of a custom typst template. See <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</td></tr>
-<tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>, <code>logo</code> (SVG or PNG shown top-left; a missing file is an error).</td></tr>
+<tr><td><code>e_invoice</code></td><td>none</td><td>E-invoices written by every build and editor export: <code>facturx</code>, <code>ubl</code> or <code>[facturx, ubl]</code>. See <a href="#e-invoices-factur-x-and-peppol">E-invoices</a>.</td></tr>
+<tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>, <code>logo</code> (SVG or PNG shown top-left; a missing file is an error). For e-invoices also <code>vat_id</code>, <code>legal_id</code>, <code>country</code>, <code>endpoint</code> (never printed).</td></tr>
 <tr><td><code>payment</code></td><td>empty</td><td><code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code> (list of lines).</td></tr>
-<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>locale</code>, <code>number_format</code>, <code>date_format</code>, <code>rate</code>, <code>unit</code>, <code>description</code>. The client’s <code>email</code> is the recipient of <a href="#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send</code></a>.</td></tr>
+<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>; for e-invoices <code>vat_id</code>, <code>legal_id</code>, <code>country</code>, <code>endpoint</code>, <code>buyer_reference</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>locale</code>, <code>number_format</code>, <code>date_format</code>, <code>rate</code>, <code>unit</code>, <code>description</code>. The client’s <code>email</code> is the recipient of <a href="#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send</code></a>.</td></tr>
 <tr><td><code>email</code></td><td>per language</td><td><code>subject</code> and <code>body</code> of the message <code>invgen send</code> prepares, with the placeholders <code>{number}</code>, <code>{total}</code>, <code>{due}</code>, <code>{client}</code>, <code>{from}</code>.</td></tr>
 </tbody>
 </table>
@@ -538,6 +540,7 @@ date_format: "%d.%m.%Y"       # optional: strftime pattern for dates on the PDF
 number_format:                # optional: override single parts of the locale
   thousands: "'"
 template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
+buyer_reference: PO-4711      # optional: e-invoicing BT-10, required by Peppol (docs/E-INVOICING.md)
 ---
 
 # Senior Software Engineer
@@ -914,9 +917,26 @@ positive: <code>invgen build</code> then prints a warning on stderr and still wr
 editor preview simply shows no code. <code>qr: false</code> turns it off for one invoice.
 Credit notes never show the code (there is nothing for the client to pay), without
 a warning.</p>
+<h2 id="e-invoices-factur-x-ubl"><a class="header" href="#e-invoices-factur-x-ubl">E-invoices (Factur-X, UBL)</a></h2>
+<p><code>invgen build --facturx</code> writes the PDF as a Factur-X / ZUGFeRD hybrid (PDF/A-3b with
+the EN 16931 XML embedded); <code>invgen build --ubl</code> also writes <code>&lt;number&gt;.xml</code> (UBL,
+Peppol BIS Billing 3.0) next to the PDF. <code>e_invoice: facturx</code>, <code>ubl</code> or
+<code>[facturx, ubl]</code> in the config does the same for every build and editor export;
+<code>--no-e-invoice</code> turns it off for one build. Before anything is written, the invoice
+is checked and every missing mandatory field is listed. These optional party fields
+exist for e-invoicing only and are never printed:</p>
+<pre><code class="language-yaml">from:                             # or a client, or `to:` in an invoice
+  vat_id: DE123456789             # VAT ID with country prefix; default: read from `tax:`
+  legal_id: HRB 12345             # company registration number
+  country: DE                     # ISO code; default: guessed from the last address line
+  endpoint: "0208:0123456789"     # Peppol address; default: from the VAT ID
+  buyer_reference: PO-4711        # clients only: reference to quote (also front matter)
+</code></pre>
+<p>See <a href="E-INVOICING.html">E-INVOICING.md</a> for the mapping, the heuristics and the rules.</p>
 <h2 id="front-matter-overrides"><a class="header" href="#front-matter-overrides">Front matter overrides</a></h2>
 <p>Any of <code>from:</code>, <code>to:</code>, <code>payment:</code> may be given inline using the same shape as the
-config (<code>name</code>, <code>address: [..]</code>, <code>tax: [..]</code>, <code>email</code>, <code>phone</code> / <code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code>, <code>qr</code>).
+config (<code>name</code>, <code>address: [..]</code>, <code>tax: [..]</code>, <code>email</code>, <code>phone</code>, <code>vat_id</code>, <code>legal_id</code>,
+<code>country</code>, <code>endpoint</code>, <code>buyer_reference</code> / <code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code>, <code>qr</code>).
 Inline values replace the config ones field by field.</p>
 <h3 id="overriding-any-config-key-config"><a class="header" href="#overriding-any-config-key-config">Overriding any config key: <code>config:</code></a></h3>
 <p>A <code>config:</code> block takes the exact shape of <code>config.yaml</code> and is deep-merged over
@@ -961,6 +981,7 @@ number_format:                       # optional: thousands, decimal, currency, c
 labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
+e_invoice: facturx                   # optional: facturx, ubl or [facturx, ubl] (E-INVOICING.md)
 email:                               # optional: `invgen send` message (see Sending)
   subject: "Invoice {number}"
   body: "Hello,\n\nplease find attached invoice {number} for {total}.\n\n{from}"
@@ -982,6 +1003,8 @@ clients:
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
     email: billing@example.com   # optional: recipient for `invgen send`
+    vat_id: ESB12345678          # optional: e-invoicing only (E-INVOICING.md)
+    buyer_reference: NW-PO-2026  # optional: e-invoicing BT-10, required by Peppol
     currency: EUR      # optional per-client defaults
     tax_rate: 0
     tax_note: reverse_charge   # optional: EU B2B services without VAT
@@ -1117,6 +1140,9 @@ cannot be combined with <code>--client</code> or <code>--from</code>. See
 <tr><td><code>-o</code>, <code>--output OUT.pdf</code></td><td>Where to write the PDF. Default: <code>&lt;number&gt;.pdf</code> in the same folder as <code>FILE.md</code>. Missing parent folders are created.</td></tr>
 <tr><td><code>--png DIR</code></td><td>Also write a PNG of every page into <code>DIR</code> (144 dpi): <code>&lt;number&gt;.png</code>, or <code>&lt;number&gt;-1.png</code>, <code>&lt;number&gt;-2.png</code>, … for multi-page invoices.</td></tr>
 <tr><td><code>--strict</code></td><td>Refuse to build an issued invoice whose content changed (exit status 1) instead of warning.</td></tr>
+<tr><td><code>--facturx</code></td><td>Write the PDF as Factur-X / ZUGFeRD: PDF/A-3b with the EN 16931 XML embedded. See <a href="#e-invoices-factur-x-and-peppol">E-invoices</a>.</td></tr>
+<tr><td><code>--ubl</code></td><td>Also write the UBL XML (Peppol BIS Billing 3.0) next to the PDF, with the PDF’s name and <code>.xml</code>.</td></tr>
+<tr><td><code>--no-e-invoice</code></td><td>Ignore <code>e_invoice</code> from the config for this build.</td></tr>
 </tbody>
 </table>
 </div>
@@ -1658,6 +1684,61 @@ number, and the other way round.</p>
 invgen looks up the date of that invoice in your library. Without <code>number:</code>, the
 next credit note number is used. A credit note has no due date unless you write
 <code>due</code> or <code>due_days</code>. See the <a href="#credit-notes">invoice format</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div>
+<h1 id="e-invoices-factur-x-and-peppol"><a class="header" href="#e-invoices-factur-x-and-peppol">E-invoices: Factur-X and Peppol</a></h1>
+<p>More and more clients (and, in France, Germany, Belgium and elsewhere, the law) want
+invoices in a structured format that accounting software reads without retyping.
+invgen writes the European standard EN 16931 in its two common forms:</p>
+<ul>
+<li><strong>Factur-X / ZUGFeRD</strong>: your usual PDF, saved as PDF/A-3b with the invoice data
+embedded as <code>factur-x.xml</code>. People see the PDF; software reads the XML. Send it
+by email like any invoice.</li>
+<li><strong>UBL (Peppol BIS Billing 3.0)</strong>: a separate <code>.xml</code> file, the format Peppol
+access points and many public-sector portals accept.</li>
+</ul>
+<h2 id="try-it"><a class="header" href="#try-it">Try it</a></h2>
+<pre><code class="language-sh">invgen build ~/Documents/Invoices/EINV-2026-21.md --facturx
+invgen build ~/Documents/Invoices/EINV-2026-21.md --ubl     # also EINV-2026-21.xml
+</code></pre>
+<p>If something the standard requires is missing, nothing is written and every gap is
+listed with the key to set:</p>
+<pre><code class="language-text">EINV-2026-21.md: error: cannot write a Factur-X e-invoice, 1 field is missing or invalid:
+  BT-48: reverse charge needs the client's VAT ID: set `vat_id:` on the client (with its country prefix, like `ESB12345678`) or add a `tax:` line like "VAT ID: ESB12345678"
+</code></pre>
+<h2 id="fill-in-what-is-missing"><a class="header" href="#fill-in-what-is-missing">Fill in what is missing</a></h2>
+<p>invgen reads VAT IDs, countries, postcodes and cities from your <code>tax:</code> and
+<code>address:</code> lines when it can (<code>VAT ID: LU12345678</code>, <code>[..., "28001", Spain]</code>). When it
+cannot, add the explicit fields. They are only used for e-invoices and never printed:</p>
+<pre><code class="language-yaml">clients:
+  northwind:
+    name: Northwind Labs SL
+    address: ["Calle Mayor, 12", Madrid, "28001", Spain]
+    tax: ["Tax ID: B12345678"]       # printed as is
+    vat_id: ESB12345678              # the same number as a VAT ID, with prefix
+    buyer_reference: NW-PO-2026      # the reference the client asked you to quote
+</code></pre>
+<p>For Peppol (<code>--ubl</code>) every invoice also needs a buyer reference (on the client, or
+<code>buyer_reference:</code> in the invoice for a purchase order number) and an electronic
+address for both sides. The address defaults to the VAT ID for most EU countries;
+otherwise set <code>endpoint: "&lt;scheme&gt;:&lt;id&gt;"</code> with the Peppol participant ID your client
+gave you.</p>
+<h2 id="make-it-the-default"><a class="header" href="#make-it-the-default">Make it the default</a></h2>
+<pre><code class="language-yaml"># config.yaml
+e_invoice: facturx          # or ubl, or [facturx, ubl]
+</code></pre>
+<p>Now every <code>invgen build</code>, <code>invgen watch</code> and <strong>Export PDF</strong> in the editor writes
+Factur-X. <code>invgen build --no-e-invoice</code> makes a plain PDF once.</p>
+<h2 id="good-to-know"><a class="header" href="#good-to-know">Good to know</a></h2>
+<ul>
+<li>Credit notes become EN 16931 credit notes (type 381) that point at the invoice
+they correct.</li>
+<li>Reverse charge, exempt, outside-scope and zero-rated invoices get the right VAT
+category from <code>tax_rate</code> and <code>tax_note</code>.</li>
+<li>Custom templates work: the XML is attached whatever the layout.</li>
+</ul>
+<p>The full mapping, the heuristics and what was validated (Mustang, veraPDF, the
+official EN 16931 and Peppol rules) are in
+<a href="https://github.com/ldolberg/invgen/blob/main/docs/E-INVOICING.md">E-INVOICING.md</a>.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="keeping-invoices-in-git"><a class="header" href="#keeping-invoices-in-git">Keeping invoices in git</a></h1>
 <p>Invoices are small text files, so a git repository gives you history, backups

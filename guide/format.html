@@ -35,10 +35,10 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-39f425bb.js";
+            window.path_to_searchindex_js = "searchindex-829dc4aa.js";
         </script>
         <!-- Start loading toc.js asap -->
-        <script src="toc-3f7992f4.js"></script>
+        <script src="toc-d8244cd5.js"></script>
     </head>
     <body>
     <div id="mdbook-help-container">
@@ -203,6 +203,7 @@ date_format: "%d.%m.%Y"       # optional: strftime pattern for dates on the PDF
 number_format:                # optional: override single parts of the locale
   thousands: "'"
 template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
+buyer_reference: PO-4711      # optional: e-invoicing BT-10, required by Peppol (docs/E-INVOICING.md)
 ---
 
 # Senior Software Engineer
@@ -579,9 +580,26 @@ positive: <code>invgen build</code> then prints a warning on stderr and still wr
 editor preview simply shows no code. <code>qr: false</code> turns it off for one invoice.
 Credit notes never show the code (there is nothing for the client to pay), without
 a warning.</p>
+<h2 id="e-invoices-factur-x-ubl"><a class="header" href="#e-invoices-factur-x-ubl">E-invoices (Factur-X, UBL)</a></h2>
+<p><code>invgen build --facturx</code> writes the PDF as a Factur-X / ZUGFeRD hybrid (PDF/A-3b with
+the EN 16931 XML embedded); <code>invgen build --ubl</code> also writes <code>&lt;number&gt;.xml</code> (UBL,
+Peppol BIS Billing 3.0) next to the PDF. <code>e_invoice: facturx</code>, <code>ubl</code> or
+<code>[facturx, ubl]</code> in the config does the same for every build and editor export;
+<code>--no-e-invoice</code> turns it off for one build. Before anything is written, the invoice
+is checked and every missing mandatory field is listed. These optional party fields
+exist for e-invoicing only and are never printed:</p>
+<pre><code class="language-yaml">from:                             # or a client, or `to:` in an invoice
+  vat_id: DE123456789             # VAT ID with country prefix; default: read from `tax:`
+  legal_id: HRB 12345             # company registration number
+  country: DE                     # ISO code; default: guessed from the last address line
+  endpoint: "0208:0123456789"     # Peppol address; default: from the VAT ID
+  buyer_reference: PO-4711        # clients only: reference to quote (also front matter)
+</code></pre>
+<p>See <a href="E-INVOICING.html">E-INVOICING.md</a> for the mapping, the heuristics and the rules.</p>
 <h2 id="front-matter-overrides"><a class="header" href="#front-matter-overrides">Front matter overrides</a></h2>
 <p>Any of <code>from:</code>, <code>to:</code>, <code>payment:</code> may be given inline using the same shape as the
-config (<code>name</code>, <code>address: [..]</code>, <code>tax: [..]</code>, <code>email</code>, <code>phone</code> / <code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code>, <code>qr</code>).
+config (<code>name</code>, <code>address: [..]</code>, <code>tax: [..]</code>, <code>email</code>, <code>phone</code>, <code>vat_id</code>, <code>legal_id</code>,
+<code>country</code>, <code>endpoint</code>, <code>buyer_reference</code> / <code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code>, <code>qr</code>).
 Inline values replace the config ones field by field.</p>
 <h3 id="overriding-any-config-key-config"><a class="header" href="#overriding-any-config-key-config">Overriding any config key: <code>config:</code></a></h3>
 <p>A <code>config:</code> block takes the exact shape of <code>config.yaml</code> and is deep-merged over
@@ -626,6 +644,7 @@ number_format:                       # optional: thousands, decimal, currency, c
 labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
+e_invoice: facturx                   # optional: facturx, ubl or [facturx, ubl] (E-INVOICING.md)
 email:                               # optional: `invgen send` message (see Sending)
   subject: "Invoice {number}"
   body: "Hello,\n\nplease find attached invoice {number} for {total}.\n\n{from}"
@@ -647,6 +666,8 @@ clients:
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
     email: billing@example.com   # optional: recipient for `invgen send`
+    vat_id: ESB12345678          # optional: e-invoicing only (E-INVOICING.md)
+    buyer_reference: NW-PO-2026  # optional: e-invoicing BT-10, required by Peppol
     currency: EUR      # optional per-client defaults
     tax_rate: 0
     tax_note: reverse_charge   # optional: EU B2B services without VAT
