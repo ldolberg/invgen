@@ -395,9 +395,9 @@ fn view_carries_contract_version_language_and_labels() {
     assert!(v["logo"].is_null());
     assert_eq!(v["kind"], "invoice");
     assert!(v["refers_to"].is_null());
-    assert_eq!(v["total"], "EUR 9,450.00");
+    assert_eq!(v["total"], "9\u{202f}450,00\u{a0}€");
 
-    let v = serde_json::to_value(data::View::new(&credit_note(), None)).unwrap();
+    let v = serde_json::to_value(data::View::new(&credit_note(), None, None)).unwrap();
     assert_eq!(v["kind"], "credit_note");
     assert_eq!(v["refers_to"]["number"], "EINV-2026-20");
     assert_eq!(v["refers_to"]["date"], "October 1, 2026");

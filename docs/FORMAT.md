@@ -388,6 +388,8 @@ The code uses version 002, UTF-8 and error correction level M. It is skipped whe
 currency is not EUR, the IBAN is missing or fails its checksum, or the total is not
 positive: `invgen build` then prints a warning on stderr and still writes the PDF; the
 editor preview simply shows no code. `qr: false` turns it off for one invoice.
+Credit notes never show the code (there is nothing for the client to pay), without
+a warning.
 
 ## Front matter overrides
 
