@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-627f0cfb.js";
+            window.path_to_searchindex_js = "searchindex-b58be84b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -281,6 +281,11 @@ created first with commented placeholders.</p>
 </tbody>
 </table>
 </div>
+<h2 id="invgen-template---export-path---force"><a class="header" href="#invgen-template---export-path---force"><code>invgen template --export [PATH] [--force]</code></a></h2>
+<p>Writes the built-in typst template to <code>PATH</code> (or prints it when <code>PATH</code> is left
+out), as a starting point for a custom <code>template:</code>. An existing file is only
+replaced with <code>--force</code>. The data a template receives is documented in
+<a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</p>
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <p><code>0</code> on success, <code>1</code> on any error (bad arguments, unreadable files, a parse error,
 a skipped file in <code>list</code>, an invalid config after <code>config --edit</code>).</p>

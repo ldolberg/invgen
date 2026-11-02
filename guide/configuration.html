@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-627f0cfb.js";
+            window.path_to_searchindex_js = "searchindex-b58be84b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -208,6 +208,10 @@ number_prefix: EINV                  # numbers look like EINV-&lt;year&gt;-&lt;s
 currency: EUR                        # default currency code
 tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
+language: en                         # labels: en, es, de, fr, it, pt, nl
+labels:                              # optional: replace single labels
+  bill_to: Customer
+# template: my-invoice.typ           # optional: your own typst template
 
 from:                                # you, printed as the sender
   name: Alex Morgan
@@ -215,6 +219,7 @@ from:                                # you, printed as the sender
   tax: ["VAT ID: LU12345678"]        # any number of tax or registration lines
   email: alex@example.com
   phone: "+352 600 000 000"
+  logo: logo.svg                     # optional: SVG or PNG, relative to this file
 
 payment:                             # printed in the payment box
   holder: ALEX MORGAN
@@ -230,6 +235,7 @@ clients:
     email: billing@example.com
     currency: EUR                    # optional per-client defaults
     tax_rate: 0
+    language: es                     # optional: this client's invoices in Spanish
     rate: 450                        # used by the new-invoice template
     unit: days
     description: Senior Software Engineer
@@ -245,16 +251,21 @@ clients:
 <tr><td><code>currency</code></td><td><code>EUR</code></td><td>Currency code printed next to amounts. Any text works; invgen does not convert between currencies.</td></tr>
 <tr><td><code>tax_rate</code></td><td><code>0</code></td><td>Percent applied to the subtotal.</td></tr>
 <tr><td><code>due_days</code></td><td><code>14</code></td><td>Days from the invoice date to the due date.</td></tr>
-<tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>.</td></tr>
+<tr><td><code>language</code></td><td><code>en</code></td><td>Language of every label on the invoice: <code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>it</code>, <code>pt</code>, <code>nl</code>. An unknown value is an error. Dates and amounts keep their format.</td></tr>
+<tr><td><code>labels</code></td><td>none</td><td>Map of label key to text, replacing single labels in any language (keys in <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels">TEMPLATES.md</a>).</td></tr>
+<tr><td><code>template</code></td><td>built-in</td><td>Path of a custom typst template. See <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</td></tr>
+<tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>, <code>logo</code> (SVG or PNG shown top-left; a missing file is an error).</td></tr>
 <tr><td><code>payment</code></td><td>empty</td><td><code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code> (list of lines).</td></tr>
-<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>rate</code>, <code>unit</code>, <code>description</code>.</td></tr>
+<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>language</code>, <code>rate</code>, <code>unit</code>, <code>description</code>.</td></tr>
 </tbody>
 </table>
 </div>
 <p>Unknown keys are ignored, so a typo in a key name does not raise an error. If a
 value does not show up on the invoice, check the spelling first.</p>
+<p>Paths (<code>from.logo</code>, <code>template</code>) may start with <code>~</code>; relative paths are resolved
+against the folder of the config file.</p>
 <h2 id="precedence"><a class="header" href="#precedence">Precedence</a></h2>
-<p>For each invoice, <code>currency</code> and <code>tax_rate</code> are taken from the first place that
+<p>For each invoice, <code>currency</code>, <code>tax_rate</code> and <code>language</code> are taken from the first place that
 sets them:</p>
 <ol>
 <li>the invoice front matter,</li>

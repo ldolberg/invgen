@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-627f0cfb.js";
+            window.path_to_searchindex_js = "searchindex-b58be84b.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -193,8 +193,10 @@ status: pending               # pending | paid | overdue | draft
 client: northwind       # key into config `clients:`  ...or an inline `to:` block
 currency: EUR                 # optional: falls back to client currency, then config default
 tax_rate: 0                   # percent; optional, falls back to client, then config
-tax_label: VAT                # optional
+tax_label: VAT                # optional: defaults to the translated "VAT" label
 accent: "#111827"             # optional
+language: en                  # optional: en, es, de, fr, it, pt, nl
+template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
 ---
 
 # Senior Software Engineer
@@ -276,7 +278,32 @@ show an effective status instead: a <code>pending</code> invoice whose due date 
 shows as <code>overdue</code> with the days late (<code>overdue 12d</code>). Any other written status
 wins, and an invoice without a due date (<code>due: false</code>) is never overdue automatically.</li>
 <li><code>signature</code>: defaults to <code>from.name</code>; <code>false</code> hides it, a string replaces it.</li>
-<li><code>tax_label</code> defaults to <code>VAT</code>; <code>accent</code> defaults to <code>#111827</code> (<code>#rgb</code> or <code>#rrggbb</code>).</li>
+<li><code>tax_label</code> defaults to the <code>tax</code> label of the invoice language (<code>VAT</code>, <code>IVA</code>,
+<code>USt.</code>, <code>TVA</code>, <code>Btw</code>…); <code>accent</code> defaults to <code>#111827</code> (<code>#rgb</code> or <code>#rrggbb</code>).</li>
+<li><code>language</code>: front matter, then the client, then the config, default <code>en</code>. Supported:
+<code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>it</code>, <code>pt</code>, <code>nl</code> (case-insensitive; a region suffix such as
+<code>fr-BE</code> is accepted and ignored). Any other value is an error listing these. The
+language changes every label on the invoice (headings, column names, status);
+dates and amounts keep their format.</li>
+<li><code>template</code>: front matter, then the config; none means the built-in template.</li>
+</ul>
+<h2 id="branding-and-languages"><a class="header" href="#branding-and-languages">Branding and languages</a></h2>
+<ul>
+<li><strong>Logo</strong>: <code>from.logo</code> (SVG, PNG, JPEG, GIF or WebP) is drawn top-left in the header,
+scaled to fit 14 mm high by 60 mm wide with its aspect ratio kept. Set it in the
+config (<code>from:</code> then <code>logo: logo.svg</code>) or per invoice with <code>from:</code> / <code>config: from:</code>
+in the front matter; <code>logo: null</code> removes it for one invoice. A missing or unreadable
+file, or one that is not the image type its extension says, is an error naming the path.</li>
+<li><strong>Paths</strong> (<code>from.logo</code>, <code>template</code>) may start with <code>~</code>. Relative paths are resolved
+against the directory of the config file, wherever they are written (config or front
+matter). In the Flatpak build, keep these files in the config directory
+(<code>~/.config/invgen</code>) or under <code>~/Documents</code>, which the sandbox can read.</li>
+<li><strong>Labels</strong>: <code>labels:</code> in the config replaces single labels whatever the language,
+e.g. <code>labels: {bill_to: Customer, tax: Sales tax}</code>. The keys are listed in
+<a href="TEMPLATES.html#labels">TEMPLATES.md</a>; a key a language does not define falls back
+to English. Use <code>config: labels:</code> in the front matter to change one invoice only.</li>
+<li><strong>Templates</strong>: see <a href="TEMPLATES.html">TEMPLATES.md</a> for writing your own and the data
+it receives. <code>invgen template --export FILE.typ</code> writes the built-in one.</li>
 </ul>
 <h2 id="front-matter-overrides"><a class="header" href="#front-matter-overrides">Front matter overrides</a></h2>
 <p>Any of <code>from:</code>, <code>to:</code>, <code>payment:</code> may be given inline using the same shape as the
@@ -315,12 +342,17 @@ number_prefix: EINV                  # numbers look like EINV-&lt;year&gt;-&lt;s
 currency: EUR
 tax_rate: 0
 due_days: 14
+language: en                         # optional: en, es, de, fr, it, pt, nl
+labels:                              # optional: override single labels
+  bill_to: Customer
+template: ~/invgen/my-invoice.typ    # optional: custom typst template
 from:
   name: Alex Morgan
   address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
   tax: ["VAT ID: LU12345678", "Tax ID: R.C.S. Luxembourg B000000 Business Permit 00000000/0"]
   email: alex@example.com
   phone: "+352 600 000 000"
+  logo: logo.svg                     # optional: relative to this file
 payment:
   holder: ALEX MORGAN
   iban: DE89 3704 0044 0532 0130 00
@@ -332,6 +364,7 @@ clients:
     tax: ["Tax ID: B12345678"]
     currency: EUR      # optional per-client defaults
     tax_rate: 0
+    language: es       # optional: invoices for this client in Spanish
     rate: 450          # default rate used by templates
     unit: days
     description: Senior Software Engineer
