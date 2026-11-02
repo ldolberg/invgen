@@ -260,6 +260,11 @@ fn build(
     let compiled = renderer
         .compile(&inv)
         .with_context(|| format!("rendering {}", file.display()))?;
+    if let Some(w) = invgen::render::epc::warning(&inv) {
+        let st = Style::stderr();
+        let loc = format!("{}:", file.display());
+        eprintln!("{} {} {}", st.bold(&loc), st.yellow("warning:"), w);
+    }
     let out = output
         .map(Path::to_path_buf)
         .unwrap_or_else(|| default_output(file, &inv));

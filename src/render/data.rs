@@ -60,6 +60,8 @@ struct PaymentView {
     iban: Option<String>,
     bic: Option<String>,
     notes: Vec<String>,
+    /// Virtual path of the EPC payment QR code (e.g. "/epc-qr.svg"), or null.
+    qr: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -122,8 +124,9 @@ impl From<&Party> for PartyView {
 }
 
 impl View {
-    /// `logo` is the virtual path the logo bytes are served at, if any.
-    pub(super) fn new(inv: &Invoice, logo: Option<String>) -> Self {
+    /// `logo` and `qr` are the virtual paths the logo and the payment QR
+    /// code are served at, if any.
+    pub(super) fn new(inv: &Invoice, logo: Option<String>, qr: Option<String>) -> Self {
         let cur = inv.currency.trim();
         // An unsupported code (only possible when building an Invoice by hand)
         // renders in English rather than failing in typst.
@@ -158,6 +161,7 @@ impl View {
                 iban: opt(&inv.payment.iban),
                 bic: opt(&inv.payment.bic),
                 notes: clean(&inv.payment.notes),
+                qr,
             },
             items: inv
                 .items

@@ -203,6 +203,7 @@ mod tests {
                 iban: Some("DE89 3704 0044 0532 0130 00".into()),
                 bic: Some("COBADEFFXXX".into()),
                 notes: vec![],
+                qr: false,
             },
             client_key: "northwind".into(),
             client: ClientConfig {
