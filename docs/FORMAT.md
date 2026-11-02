@@ -72,6 +72,10 @@ Any other paragraph becomes a note under the table.
   (front matter `due_days`, else config `due_days`). `due: false` (or `due: none`)
   leaves the due date off the invoice.
 * `status`: `pending` (default), `paid`, `overdue`, `draft`; case-insensitive.
+  The PDF always shows the status as written. `invgen list` and the editor sidebar
+  show an effective status instead: a `pending` invoice whose due date has passed
+  shows as `overdue` with the days late (`overdue 12d`). Any other written status
+  wins, and an invoice without a due date (`due: false`) is never overdue automatically.
 * `signature`: defaults to `from.name`; `false` hides it, a string replaces it.
 * `tax_label` defaults to `VAT`; `accent` defaults to `#111827` (`#rgb` or `#rrggbb`).
 
@@ -144,8 +148,12 @@ clients:
 ```
 
 Sequence numbers are global and monotonically increasing across years
-(EINV-2025-13 is followed by EINV-2026-14). The next number scans `invoices_dir`
-(and up to two levels of subfolders) for `<prefix>-YYYY-N*.md` / `.pdf` files, with N
+(EINV-2025-13 is followed by EINV-2026-14). The next number scans the invoice
+library (see below) for `<prefix>-YYYY-N*.md` / `.pdf` files, with N
 padded or not (`EINV-2025-1`, `EINV-2025-02`), takes the highest N of any year plus one
 and formats it with at least two digits: `EINV-2026-01` for an empty directory.
 `~` in `invoices_dir` is expanded; the default is `~/Documents/Invoices`.
+
+The invoice library is `invoices_dir` plus up to two levels of subfolders
+(`Invoices/2026/`, `Invoices/clients/acme/`); hidden folders such as `.git` are
+skipped. `invgen list`, the editor sidebar and next-number scanning all use it.

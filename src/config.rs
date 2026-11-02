@@ -106,8 +106,12 @@ impl Config {
     /// Next invoice number by scanning invoices_dir for `<prefix>-<year>-<seq>.(md|pdf)`
     /// (also accepts unpadded seq like EINV-2025-1). Seq is global across years.
     pub fn next_number(&self, year: i32) -> String {
-        let mut max = 0u64;
-        scan_sequences(&self.invoices_dir, &self.number_prefix, 2, &mut max);
+        let max = crate::library::discover_with_extensions(&self.invoices_dir, &["md", "pdf"])
+            .iter()
+            .filter_map(|p| p.file_stem()?.to_str())
+            .filter_map(|s| sequence_of(s, &self.number_prefix))
+            .max()
+            .unwrap_or(0);
         format!("{}-{}-{:02}", self.number_prefix, year, max + 1)
     }
 
@@ -206,37 +210,6 @@ fn collapse_tilde(path: &Path) -> PathBuf {
     match path.strip_prefix(home()) {
         Ok(rest) if home() != Path::new("/") => Path::new("~").join(rest),
         _ => path.to_path_buf(),
-    }
-}
-
-/// Collect the highest sequence number of `<prefix>-YYYY-N[...].(md|pdf)` files
-/// in `dir`, descending `depth` levels into subdirectories (e.g. per-year folders).
-fn scan_sequences(dir: &Path, prefix: &str, depth: u32, max: &mut u64) {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if depth > 0 {
-                scan_sequences(&path, prefix, depth - 1, max);
-            }
-            continue;
-        }
-        let ext_ok = path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("md") || e.eq_ignore_ascii_case("pdf"));
-        if !ext_ok {
-            continue;
-        }
-        if let Some(seq) = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .and_then(|s| sequence_of(s, prefix))
-        {
-            *max = (*max).max(seq);
-        }
     }
 }
 
