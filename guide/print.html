@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-38f9dde6.js";
+            window.path_to_searchindex_js = "searchindex-627f0cfb.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -595,6 +595,16 @@ and formats it with at least two digits: <code>EINV-2026-01</code> for an empty 
 <p>The invoice library is <code>invoices_dir</code> plus up to two levels of subfolders
 (<code>Invoices/2026/</code>, <code>Invoices/clients/acme/</code>); hidden folders such as <code>.git</code> are
 skipped. <code>invgen list</code>, the editor sidebar and next-number scanning all use it.</p>
+<p>The editor’s first-run setup and its Clients window write to this file in place:
+only the lines of the keys they change are rewritten (a key’s trailing <code># comment</code>
+is kept), new keys go at the end of their block, and everything else stays byte for
+byte. They write values in the same style as above (plain scalars, quoted when
+YAML would read them as something else, lists as <code>[a, b]</code>). Client keys must be
+plain YAML keys: letters, digits, <code>-</code>, <code>_</code> and <code>.</code>, starting with a letter or digit.
+Before writing, the result is parsed again and checked; the previous file is kept as
+<code>config.yaml.bak</code>. Files the editor cannot change safely (flow mappings like
+<code>clients: {acme: {...}}</code>, anchors and aliases, tags, several documents) are never
+rewritten; edit those by hand.</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="command-line"><a class="header" href="#command-line">Command line</a></h1>
 <pre><code class="language-text">invgen [--config PATH] [COMMAND]
