@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-ede46e89.js";
+            window.path_to_searchindex_js = "searchindex-a550ddff.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -490,7 +490,8 @@ Numbers are kept as exact decimals (no binary floating point), so <code>0.1</cod
 when its first entry has that shape; then every entry must have it. The <code>detail</code> is the
 item’s continuation lines (indented text under it) and/or its nested list entries
 (joined with <code>; </code>). Lists whose first entry is not item-shaped, and lists under a
-<code>Notes</code> heading, become notes (one note per entry).</li>
+<code>Notes</code> heading, become notes (one note per entry).
+Lists may nest at most 64 levels deep; deeper nesting is an error.</li>
 <li><strong>Headings</strong> are ignored for data (they are for you), except a heading named
 <code>Notes</code> whose following paragraphs and lists become notes (until the next heading).</li>
 <li><strong>Lead paragraph</strong>: a paragraph directly after a (non-<code>Notes</code>) heading and before the
