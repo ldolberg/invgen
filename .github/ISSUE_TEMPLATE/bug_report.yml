@@ -1,0 +1,77 @@
+name: Bug report
+description: Something does not work as described in the guide.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. This repository is public: use fictional data only
+        (for example Alex Morgan, Northwind Labs, example.com, IBAN
+        DE89 3704 0044 0532 0130 00). Never paste your real config, real invoices
+        or real client or bank details.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands you ran or actions in the editor, in order.
+      placeholder: |
+        1. invgen new --client northwind
+        2. invgen build ~/Documents/Invoices/EINV-2026-01.md
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: invoice
+    attributes:
+      label: Minimal invoice markdown (dummy data)
+      description: The smallest invoice file that shows the problem, if it is about parsing or rendering.
+      render: markdown
+  - type: textarea
+    id: config
+    attributes:
+      label: Relevant config (dummy data)
+      description: Only the keys that matter, with fictional values.
+      render: yaml
+  - type: textarea
+    id: output
+    attributes:
+      label: Error output
+      description: Terminal output, or the message shown in the editor status line.
+      render: text
+  - type: input
+    id: version
+    attributes:
+      label: invgen version
+      description: Output of `invgen --version`.
+      placeholder: invgen 0.1.2
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: Installed via
+      options:
+        - Flatpak
+        - Release tarball
+        - From source (make install or cargo install)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Distribution and desktop
+      placeholder: Fedora 43, GNOME on Wayland
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy
+      options:
+        - label: Everything I pasted above is fictional or redacted.
+          required: true

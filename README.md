@@ -1,5 +1,7 @@
 # invgen
 
+[![CI](https://github.com/ldolberg/invgen/actions/workflows/ci.yml/badge.svg)](https://github.com/ldolberg/invgen/actions/workflows/ci.yml)
+
 Write invoices in markdown, get clean PDFs. A native Linux editor shows a live
 preview as you type; a small CLI builds, watches and lists invoices from the
 terminal. Your details, bank and clients live once in a config file, so each
@@ -8,6 +10,9 @@ invoice is a few lines.
 ![invgen editor](docs/screenshot.png)
 
 <img src="docs/sample-invoice.png" width="420" alt="Sample invoice PDF">
+
+**[User guide](https://ldolberg.github.io/invgen/guide/)** (install, config, format,
+CLI, editor, recipes, FAQ) | [Contributing](CONTRIBUTING.md)
 
 ## Install
 
@@ -108,7 +113,8 @@ git tag v0.1.3 && git push origin v0.1.3
 
 The Release workflow tests the crate, builds the tarball and the Flatpak, publishes
 the signed Flatpak repo to GitHub Pages and creates the GitHub release. Running it
-by hand from the Actions tab is a dry run.
+by hand from the Actions tab is a dry run. Build, test and coding rules:
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
