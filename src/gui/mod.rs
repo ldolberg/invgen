@@ -839,13 +839,30 @@ pub fn tilde(p: &Path) -> String {
     p.display().to_string()
 }
 
+/// Open a file with the desktop's default application, without waiting for it.
 pub fn open_external(p: &Path) {
-    let _ = std::process::Command::new("xdg-open")
-        .arg(p)
+    let _ = opener(p)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn();
+}
+
+/// The platform's "open with the default application" command for `p`:
+/// `open` on macOS, `explorer.exe` on Windows (it hands the path to
+/// ShellExecute and, unlike `cmd /C start`, needs no shell quoting, so names
+/// with `&` or `^` still open), `xdg-open` elsewhere.
+fn opener(p: &Path) -> std::process::Command {
+    let program = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(windows) {
+        "explorer.exe"
+    } else {
+        "xdg-open"
+    };
+    let mut cmd = std::process::Command::new(program);
+    cmd.arg(p);
+    cmd
 }
 
 const FALLBACK_TEMPLATE: &str = "---\nstatus: draft\n---\n\n# Services\n\n| Description | Qty | Unit | Rate |\n|-------------|-----|------|------|\n| Consulting  | 1   | days | 0.00 |\n";
@@ -854,4 +871,24 @@ fn file_name(p: &Path) -> String {
     p.file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| p.display().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opener_uses_the_platform_command() {
+        let cmd = opener(Path::new("out.pdf"));
+        let want = if cfg!(target_os = "macos") {
+            "open"
+        } else if cfg!(windows) {
+            "explorer.exe"
+        } else {
+            "xdg-open"
+        };
+        assert_eq!(cmd.get_program(), want);
+        let args: Vec<_> = cmd.get_args().collect();
+        assert_eq!(args, ["out.pdf"]);
+    }
 }
