@@ -71,7 +71,13 @@ changes asks whether to **Save**, **Discard** or **Cancel**.
 The sidebar lists the `.md` files directly inside `invoices_dir`, newest first,
 with number, client, total and a colored status. Hover an entry to see its path
 and date; click it to open it. Files that fail to parse are still listed, marked
-"could not parse". The list refreshes when files in the folder change, including
+"could not parse".
+
+Right-click an entry for **Mark as paid**, **Set status** (pending, paid,
+overdue, draft) and **Duplicate**. The status actions edit only the `status`
+and `paid_on` lines of the file; if that file is open with unsaved changes,
+nothing is written and a message asks you to save first. **Duplicate** works
+like `invgen new --from` and opens the new invoice. The list refreshes when files in the folder change, including
 changes made by other programs.
 
 Toggle the sidebar with Ctrl+B or the button in the top left corner.

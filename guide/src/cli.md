@@ -53,6 +53,33 @@ an existing file. The template contains:
 With no clients in the config, the template has an inline `to:` block to fill in
 instead.
 
+## `invgen new --from NUMBER|last [--client KEY] [--open]`
+
+Duplicates an existing invoice for recurring work: the copy keeps the items
+table or list, the notes, the front matter overrides and your formatting, and
+gets the next free number. It is written to `invoices_dir` like `invgen new`
+and its path is printed.
+
+| Argument | Meaning |
+|---|---|
+| `--from NUMBER` | The invoice to copy: its number (`EINV-2026-23`), the bare sequence number (`23`), or a file path. |
+| `--from last` | The highest-numbered invoice in the library, or the highest one with `client: KEY` when `--client KEY` is given. `--client` only works together with `--from last`. |
+
+The copy changes only what belongs to one invoice:
+
+- `number` is the next free number and `date` is today;
+- an explicit `due:` date is removed, so the due date is computed again from
+  `due_days` (`due: false` and `due_days` are kept);
+- `status` becomes `pending` and `paid_on` is removed;
+- in the body, a month with its year (`October 2026`, `Oct 2026`) or a
+  `YYYY-MM` period (`2026-10`) that refers to the source invoice's month or the
+  month before it moves forward by the number of months since the source date
+  (at least one): `October 2026 period` becomes `November 2026 period`, and
+  `December 2026` becomes `January 2027`. Full dates such as `2026-10-01` and
+  other months are left alone.
+
+Quantities are copied as they are, so check the number of days.
+
 ## `invgen build FILE.md [-o OUT.pdf] [--png DIR]`
 
 Renders one invoice.
@@ -89,6 +116,27 @@ After each year it prints that year's total, one line per currency. Files that
 fail to parse are reported as `skipped:` with their error, and the command then
 exits with status 1 (after printing the table), which makes it usable as a check
 in scripts.
+
+## `invgen paid FILE|NUMBER [--on YYYY-MM-DD]`
+
+Marks an invoice as paid: sets `status: paid` and `paid_on:` in its front
+matter. Only those lines change; comments, key order and the body stay byte for
+byte as they were (a missing front matter block is created).
+
+`FILE|NUMBER` is a path, or an invoice number looked up in the invoice library:
+the full number (`EINV-2026-23`, matched against the front matter `number` and
+the file name) or the bare sequence number (`23`). No match, or more than one,
+is an error.
+
+| Option | Meaning |
+|---|---|
+| `--on YYYY-MM-DD` | The payment date. Default: the `paid_on` already in the file, else today. |
+
+## `invgen status FILE|NUMBER STATUS`
+
+Sets the written status to `pending`, `paid`, `overdue` or `draft`, editing only
+that line. `paid` works like `invgen paid` without `--on`; any other status
+removes `paid_on`.
 
 ## `invgen config [--edit]`
 

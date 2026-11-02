@@ -1,5 +1,6 @@
 //! Drawing: header, sidebar, editor, preview, status bar, toasts and dialogs.
 
+use super::library::Action;
 use super::theme::{self, Palette};
 use super::{App, Pending, ThemeChoice, ToastKind, highlight, open_external, tilde};
 use crate::model::{Status, format_date, format_money, status_display};
@@ -311,6 +312,7 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
 
     let current = app.path.clone();
     let mut clicked = None;
+    let mut action = None;
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
@@ -390,16 +392,59 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                     if let Some(d) = e.date {
                         ui.label(RichText::new(format_date(d)).color(p.text_weak));
                     }
+                    if let Some(d) = e.paid_on {
+                        ui.label(
+                            RichText::new(format!("Paid {}", format_date(d))).color(p.text_weak),
+                        );
+                    }
                 });
                 if resp.clicked() && !selected {
                     clicked = Some(e.path.clone());
                 }
+                resp.context_menu(|ui| {
+                    if let Some(a) = sidebar_menu(ui, e.status) {
+                        action = Some((e.path.clone(), a));
+                        ui.close();
+                    }
+                });
                 resp.on_hover_cursor(CursorIcon::PointingHand);
             }
         });
     if let Some(path) = clicked {
         app.request(Pending::Open(path));
     }
+    if let Some((path, a)) = action {
+        app.library_action(path, a);
+    }
+}
+
+/// Right-click menu of a sidebar entry; `status` is the effective one.
+fn sidebar_menu(ui: &mut egui::Ui, status: Option<Status>) -> Option<Action> {
+    let mut picked = None;
+    let paid = status == Some(Status::Paid);
+    if ui
+        .add_enabled(!paid, egui::Button::new("Mark as paid"))
+        .clicked()
+    {
+        picked = Some(Action::SetStatus(Status::Paid));
+    }
+    ui.menu_button("Set status", |ui| {
+        for s in [
+            Status::Pending,
+            Status::Paid,
+            Status::Overdue,
+            Status::Draft,
+        ] {
+            if ui.button(s.label()).clicked() {
+                picked = Some(Action::SetStatus(s));
+            }
+        }
+    });
+    ui.separator();
+    if ui.button("Duplicate").clicked() {
+        picked = Some(Action::Duplicate);
+    }
+    picked
 }
 
 /// Single line galley cut with an ellipsis to `max_w`.

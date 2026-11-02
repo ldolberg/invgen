@@ -10,6 +10,7 @@ number: EINV-2026-23          # optional: auto = next number after the highest i
 date: 2026-11-02              # optional: defaults to today
 due: 2026-11-16               # optional: or `due_days: 14`, or `false` to hide it
 status: pending               # pending | paid | overdue | draft
+paid_on: 2026-11-20           # optional: when it was paid (`invgen paid` writes it)
 client: northwind       # key into config `clients:`  ...or an inline `to:` block
 currency: EUR                 # optional: falls back to client currency, then config default
 tax_rate: 0                   # percent; optional, falls back to client, then config
@@ -98,6 +99,10 @@ about 7.9e28 is an error.
   show an effective status instead: a `pending` invoice whose due date has passed
   shows as `overdue` with the days late (`overdue 12d`). Any other written status
   wins, and an invoice without a due date (`due: false`) is never overdue automatically.
+* `paid_on`: `YYYY-MM-DD`, the day the invoice was paid. Optional and not printed on
+  the PDF; `invgen list` shows it next to a `paid` status (`paid 2026-11-20`).
+  `invgen paid` sets `status: paid` and `paid_on` for you, and `invgen status`
+  with any other status removes it. Both change only those front matter lines.
 * `signature`: defaults to `from.name`; `false` hides it, a string replaces it.
 * `tax_label` defaults to `VAT`; `accent` defaults to `#111827` (`#rgb` or `#rrggbb`).
 

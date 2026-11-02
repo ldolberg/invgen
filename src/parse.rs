@@ -114,19 +114,11 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         .unwrap_or_else(|| cfg.next_number(date.year()));
     let status = match fm.str("status")? {
         None => Status::default(),
-        Some(s) => match s.trim().to_ascii_lowercase().as_str() {
-            "pending" => Status::Pending,
-            "paid" => Status::Paid,
-            "overdue" => Status::Overdue,
-            "draft" => Status::Draft,
-            _ => {
-                return Err(ParseError::new(
-                    fm.line_of("status"),
-                    format!("unknown status `{s}` (use pending, paid, overdue or draft)"),
-                ));
-            }
-        },
+        Some(s) => s
+            .parse()
+            .map_err(|m: String| ParseError::new(fm.line_of("status"), m))?,
     };
+    let paid_on = fm.date("paid_on")?;
     let currency = fm
         .str("currency")?
         .or_else(|| client.and_then(|c| c.currency.clone()))
@@ -169,6 +161,7 @@ pub fn parse_invoice(src: &str, cfg: &Config) -> Result<Invoice> {
         date,
         due,
         status,
+        paid_on,
         currency,
         from,
         to,
@@ -1148,6 +1141,10 @@ Any other paragraph becomes a note under the table.
         assert_eq!(inv.signature, None);
         assert_eq!(inv.accent, "#aabbcc");
         assert_eq!(inv.status, Status::Paid);
+        assert_eq!(inv.paid_on, None);
+
+        let inv = parse("---\nstatus: paid\npaid_on: 2026-02-10\n---\n- A: 1 @ 1\n").unwrap();
+        assert_eq!(inv.paid_on, Some(date(2026, 2, 10)));
 
         let inv = parse("---\nsignature: L. D.\n---\n- A: 1 @ 1\n").unwrap();
         assert_eq!(inv.signature.as_deref(), Some("L. D."));
@@ -1294,6 +1291,9 @@ please.
         assert_eq!(err.line, 2);
         let err = parse("---\naccent: red\n---\n- A: 1 @ 1\n").unwrap_err();
         assert_eq!(err.line, 2);
+        let err = parse("---\nstatus: paid\npaid_on: last week\n---\n- A: 1 @ 1\n").unwrap_err();
+        assert_eq!(err.line, 3);
+        assert!(err.message.contains("`paid_on` must be a date"), "{err}");
         let err = parse("---\nnumber: X\n").unwrap_err();
         assert_eq!(err.line, 1);
     }

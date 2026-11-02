@@ -58,9 +58,12 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 |---|---|
 | `invgen` / `invgen edit [FILE]` | Open the editor |
 | `invgen new [--client KEY] [--open]` | Create the next numbered invoice |
+| `invgen new --from NUMBER\|last [--client KEY]` | Duplicate an invoice (items, notes, overrides) as the next one, with today's date and the period moved forward |
 | `invgen build FILE.md [-o OUT.pdf] [--png DIR]` | Render a PDF (and optional PNG previews) |
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
 | `invgen list` | Table of all invoices (including subfolders) with yearly totals; pending invoices past due show as `overdue Nd` |
+| `invgen paid FILE\|NUMBER [--on DATE]` | Mark an invoice paid (`status: paid`, `paid_on`), editing only those lines |
+| `invgen status FILE\|NUMBER STATUS` | Set the status: `pending`, `paid`, `overdue` or `draft` |
 | `invgen config [--edit]` | Show (or edit) the config file |
 
 Every command accepts `--config PATH` (or `INVGEN_CONFIG=PATH`) to use another config.

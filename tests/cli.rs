@@ -490,3 +490,198 @@ fn chrono_year() -> i32 {
     use chrono::Datelike;
     chrono::Local::now().year()
 }
+
+// ---------------------------------------------------------------- paid / status
+
+const PENDING: &str = "---
+number: INV-2026-3   # keep this comment
+date: 2026-10-01
+due: 2026-10-15
+status: pending      # pending | paid
+client: northwind
+---
+
+# Senior Software Engineer
+September 2026 period
+
+| Description | Qty | Unit | Rate |
+|---|---:|---|---:|
+| Senior Software Engineer | 20 | days | 450.00 |
+";
+
+#[test]
+fn paid_by_number_changes_only_front_matter_lines() {
+    let env = Env::with_config();
+    let path = env.invoice("INV-2026-3.md", PENDING);
+    env.cmd()
+        .args(["paid", "INV-2026-3", "--on", "2026-10-20"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("paid on 2026-10-20"));
+    let text = fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        text,
+        PENDING.replace(
+            "status: pending      # pending | paid\n",
+            "status: paid         # pending | paid\npaid_on: 2026-10-20\n"
+        )
+    );
+    // `list` shows the payment date.
+    env.cmd()
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("paid 2026-10-20"));
+
+    // Back to pending by bare sequence number: the file is as before.
+    env.cmd()
+        .args(["status", "3", "pending"])
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&path).unwrap(), PENDING);
+}
+
+#[test]
+fn paid_by_path_defaults_to_today() {
+    let env = Env::with_config();
+    let path = env.invoice("INV-2026-3.md", PENDING);
+    env.cmd()
+        .args(["paid", path.to_str().unwrap()])
+        .assert()
+        .success();
+    let today = chrono::Local::now().date_naive().format("%Y-%m-%d");
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(text.contains(&format!("paid_on: {today}\n")), "{text}");
+}
+
+#[test]
+fn status_errors() {
+    let env = Env::with_config();
+    env.invoice("INV-2026-3.md", PENDING);
+    env.cmd()
+        .args(["status", "INV-2026-3", "sent"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("sent"));
+    env.cmd()
+        .args(["paid", "INV-2026-9"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no invoice `INV-2026-9`"));
+    env.cmd()
+        .args(["paid", "INV-2026-3", "--on", "yesterday"])
+        .assert()
+        .failure();
+    // The same number twice is ambiguous.
+    fs::create_dir_all(env.invoices().join("copy")).unwrap();
+    fs::write(env.invoices().join("copy/INV-2026-3.md"), PENDING).unwrap();
+    env.cmd()
+        .args(["paid", "INV-2026-3"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("matches 2 invoices"));
+}
+
+// ---------------------------------------------------------------- new --from
+
+#[test]
+fn new_from_number_copies_and_resets() {
+    let env = Env::with_config();
+    let paid = PENDING
+        .replace("status: pending ", "status: paid    ")
+        .replace(
+            "client: northwind",
+            "paid_on: 2026-10-20\nclient: northwind",
+        );
+    env.invoice("INV-2026-3.md", &paid);
+    let out = env
+        .cmd()
+        .args(["new", "--from", "INV-2026-3"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let path = PathBuf::from(stdout_of(&out).trim());
+    let year = chrono_year();
+    assert_eq!(path, env.invoices().join(format!("INV-{year}-04.md")));
+    let text = fs::read_to_string(&path).unwrap();
+    let today = chrono::Local::now().date_naive();
+    assert!(
+        text.starts_with(&format!(
+            "---\nnumber: INV-{year}-04  # keep this comment\n"
+        )),
+        "{text}"
+    );
+    // The source is dated October, so its September period moves forward.
+    assert!(text.contains("\nOctober 2026 period\n"), "{text}");
+    assert!(
+        text.contains(&format!("date: {}\n", today.format("%Y-%m-%d"))),
+        "{text}"
+    );
+    assert!(
+        text.contains("status: pending      # pending | paid\n"),
+        "{text}"
+    );
+    assert!(!text.contains("due:"), "{text}");
+    assert!(!text.contains("paid_on"), "{text}");
+    assert!(
+        text.contains("| Senior Software Engineer | 20 | days | 450.00 |"),
+        "{text}"
+    );
+    // The source is left alone and the copy builds.
+    assert_eq!(
+        fs::read_to_string(env.invoices().join("INV-2026-3.md")).unwrap(),
+        paid
+    );
+    env.cmd()
+        .args(["build", path.to_str().unwrap()])
+        .assert()
+        .success();
+}
+
+#[test]
+fn new_from_last_picks_the_highest_number_for_the_client() {
+    let env = Env::with_config();
+    env.invoice("INV-2026-3.md", PENDING);
+    env.invoice(
+        "INV-2026-4.md",
+        "---\nnumber: INV-2026-4\nclient: contoso\n---\n- Support: 3 hours @ 80\n",
+    );
+    let out = env
+        .cmd()
+        .args(["new", "--from", "last", "--client", "northwind"])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = fs::read_to_string(stdout_of(&out).trim()).unwrap();
+    let year = chrono_year();
+    assert!(text.contains(&format!("number: INV-{year}-05")), "{text}");
+    assert!(text.contains("client: northwind"), "{text}");
+
+    // The copy (just created, northwind) is now the highest overall.
+    let out = env.cmd().args(["new", "--from", "last"]).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = fs::read_to_string(stdout_of(&out).trim()).unwrap();
+    assert!(text.contains(&format!("number: INV-{year}-06")), "{text}");
+    assert!(text.contains("client: northwind"), "{text}");
+
+    env.cmd()
+        .args(["new", "--from", "last", "--client", "nobody"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown client `nobody`"));
+    env.cmd()
+        .args(["new", "--from", "INV-2026-3", "--client", "contoso"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--from last"));
+}
+
+#[test]
+fn new_from_last_with_empty_library_fails() {
+    let env = Env::with_config();
+    env.cmd()
+        .args(["new", "--from", "last"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no invoices"));
+}
