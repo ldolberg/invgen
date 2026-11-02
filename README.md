@@ -60,7 +60,9 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen new [--client KEY] [--open]` | Create the next numbered invoice |
 | `invgen build FILE.md [-o OUT.pdf] [--png DIR]` | Render a PDF (and optional PNG previews) |
 | `invgen watch FILE.md` | Rebuild the PDF on every save |
-| `invgen list` | Table of all invoices (including subfolders) with yearly totals; pending invoices past due show as `overdue Nd` |
+| `invgen list [--year YYYY] [--client KEY\|NAME] [--status S]... [--unpaid]` | Table of the invoices (including subfolders) with yearly totals and the outstanding balance by age (not due yet, 1-30, 31-60, 61+ days late); pending invoices past due show as `overdue Nd`. Filters combine and totals respect them |
+| `invgen list --format csv\|json` | Export the (filtered) invoices for accounting tools and scripts, see [docs/EXPORT.md](docs/EXPORT.md) |
+| `invgen check [--strict]` | Check the library: duplicate numbers, gaps, dates out of order, files that fail to parse, missing client or sender tax data. Exit 1 on errors (or warnings with `--strict`) |
 | `invgen config [--edit]` | Show (or edit) the config file |
 
 Every command accepts `--config PATH` (or `INVGEN_CONFIG=PATH`) to use another config.

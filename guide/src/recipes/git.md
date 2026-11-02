@@ -50,14 +50,29 @@ folders once they are closed.
 
 ## Check before committing
 
-`invgen list` exits with status 1 when any invoice fails to parse, so it works as
-a pre-commit check:
+`invgen check` exits with status 1 when an invoice fails to parse, a number is
+used twice, or a higher number is dated before a lower one, so it works as a
+pre-commit hook:
 
 ```sh
-# .git/hooks/pre-commit (make it executable)
 #!/bin/sh
-exec invgen list >/dev/null
+# .git/hooks/pre-commit (make it executable: chmod +x .git/hooks/pre-commit)
+exec invgen check
 ```
+
+Use `invgen check --strict` to also block commits on warnings, such as a gap in
+the numbering or a sender without tax lines. If your config lives outside the
+repository, set `INVGEN_CONFIG` in the hook (hooks do not read your shell
+profile):
+
+```sh
+#!/bin/sh
+export INVGEN_CONFIG="$HOME/Documents/Invoices/config.yaml"
+exec invgen check --strict
+```
+
+Note that the hook checks the files in the working tree, not only what is
+staged.
 
 ## Commit messages that tell the story
 
