@@ -1,6 +1,6 @@
 [package]
 name = "invgen"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Markdown invoices to beautiful PDFs, with a live-preview editor"
 license = "MIT"
