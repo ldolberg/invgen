@@ -179,3 +179,14 @@ and formats it with at least two digits: `EINV-2026-01` for an empty directory.
 The invoice library is `invoices_dir` plus up to two levels of subfolders
 (`Invoices/2026/`, `Invoices/clients/acme/`); hidden folders such as `.git` are
 skipped. `invgen list`, the editor sidebar and next-number scanning all use it.
+
+The editor's first-run setup and its Clients window write to this file in place:
+only the lines of the keys they change are rewritten (a key's trailing `# comment`
+is kept), new keys go at the end of their block, and everything else stays byte for
+byte. They write values in the same style as above (plain scalars, quoted when
+YAML would read them as something else, lists as `[a, b]`). Client keys must be
+plain YAML keys: letters, digits, `-`, `_` and `.`, starting with a letter or digit.
+Before writing, the result is parsed again and checked; the previous file is kept as
+`config.yaml.bak`. Files the editor cannot change safely (flow mappings like
+`clients: {acme: {...}}`, anchors and aliases, tags, several documents) are never
+rewritten; edit those by hand.

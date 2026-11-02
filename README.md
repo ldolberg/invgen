@@ -44,6 +44,14 @@ Or just the binary: `cargo install --path . --locked`.
 
 ## Quickstart
 
+Open the editor (`invgen`, or the app launcher). The first time, when there is no
+config yet, it asks for your details, bank account and first client, writes a
+commented `~/.config/invgen/config.yaml` and opens your first invoice, ready to
+export. Prefer YAML? Pick "Skip, I'll edit YAML" and the commented template opens
+in your text editor instead.
+
+From the terminal:
+
 ```sh
 invgen config --edit         # create ~/.config/invgen/config.yaml and fill in your data
 invgen new --client acme     # writes ~/Documents/Invoices/INV-2026-01.md
@@ -64,6 +72,15 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen config [--edit]` | Show (or edit) the config file |
 
 Every command accepts `--config PATH` (or `INVGEN_CONFIG=PATH`) to use another config.
+
+In the editor, **Clients** (top bar) lists your clients and lets you add, edit,
+rename and delete them; the arrow next to **New** starts an invoice for a chosen
+client. These edits rewrite only the lines they change in `config.yaml`, so your
+comments, key order and formatting stay as they are, and the previous version is
+kept as `config.yaml.bak`. If the file uses YAML the editor cannot change safely
+(for example a client written as a flow mapping `{ ... }`, or anchors), nothing is
+written and the editor offers to open the file instead. Edits made in a text editor
+are picked up when you save them.
 Parse errors are reported as `file:line: message`.
 
 ## Format
