@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-edf2e956.js";
+            window.path_to_searchindex_js = "searchindex-7f7e3581.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -210,6 +210,10 @@ tax_rate: 0                          # default tax rate, in percent
 due_days: 14                         # due date = invoice date + due_days
 # tax_note: exempt                   # optional: legal tax mention under the totals
 language: en                         # labels: en, es, de, fr, it, pt, nl
+# locale: de-CH                      # optional: number and date format (default: language)
+# date_format: "%d.%m.%Y"            # optional: strftime pattern for dates
+# number_format:                     # optional: override single parts of the locale
+#   thousands: "'"
 labels:                              # optional: replace single labels
   bill_to: Customer
 # template: my-invoice.typ           # optional: your own typst template
@@ -238,6 +242,7 @@ clients:
     tax_rate: 0
     tax_note: reverse_charge         # optional: EU B2B services without VAT
     language: es                     # optional: this client's invoices in Spanish
+    # locale: es-MX                  # optional: also number_format, date_format
     rate: 450                        # used by the new-invoice template
     unit: days
     description: Senior Software Engineer
@@ -254,12 +259,15 @@ clients:
 <tr><td><code>tax_rate</code></td><td><code>0</code></td><td>Percent applied to the subtotal. Single lines can use another rate (a <code>Tax</code> column or <code>, tax 10%</code>), see <a href="https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#body-rules">FORMAT.md</a>.</td></tr>
 <tr><td><code>tax_note</code></td><td>none</td><td>Legal tax mention printed under the totals: <code>reverse_charge</code>, <code>exempt</code>, <code>outside_scope</code> (translated into the invoice language) or any free text. See <a href="#tax-notes">Tax notes</a>.</td></tr>
 <tr><td><code>due_days</code></td><td><code>14</code></td><td>Days from the invoice date to the due date.</td></tr>
-<tr><td><code>language</code></td><td><code>en</code></td><td>Language of every label on the invoice: <code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>it</code>, <code>pt</code>, <code>nl</code>. An unknown value is an error. Dates and amounts keep their format.</td></tr>
+<tr><td><code>language</code></td><td><code>en</code></td><td>Language of every label on the invoice: <code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>it</code>, <code>pt</code>, <code>nl</code>. An unknown value is an error. Also sets how dates and amounts are written on the PDF unless <code>locale</code> is set.</td></tr>
+<tr><td><code>locale</code></td><td><code>language</code></td><td>Number and date conventions on the PDF: a language with an optional region, e.g. <code>de</code>, <code>de-CH</code>, <code>en-US</code>, <code>pt-BR</code>. Labels still follow <code>language</code>. See below.</td></tr>
+<tr><td><code>number_format</code></td><td>locale</td><td><code>thousands</code>, <code>decimal</code> (separators), <code>currency</code> (<code>symbol</code> or <code>code</code>), <code>currency_position</code> (<code>before</code> or <code>after</code>). Each key is optional and overrides the locale.</td></tr>
+<tr><td><code>date_format</code></td><td>locale</td><td>strftime pattern for dates on the PDF, e.g. <code>"%d.%m.%Y"</code>. Month and weekday names (<code>%B</code>, <code>%b</code>, <code>%A</code>, <code>%a</code>) are translated.</td></tr>
 <tr><td><code>labels</code></td><td>none</td><td>Map of label key to text, replacing single labels in any language (keys in <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md#labels">TEMPLATES.md</a>).</td></tr>
 <tr><td><code>template</code></td><td>built-in</td><td>Path of a custom typst template. See <a href="https://github.com/ldolberg/invgen/blob/main/docs/TEMPLATES.md">TEMPLATES.md</a>.</td></tr>
 <tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>, <code>logo</code> (SVG or PNG shown top-left; a missing file is an error).</td></tr>
 <tr><td><code>payment</code></td><td>empty</td><td><code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code> (list of lines).</td></tr>
-<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>rate</code>, <code>unit</code>, <code>description</code>. The client’s <code>email</code> is the recipient of <a href="cli.html#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send</code></a>.</td></tr>
+<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>locale</code>, <code>number_format</code>, <code>date_format</code>, <code>rate</code>, <code>unit</code>, <code>description</code>. The client’s <code>email</code> is the recipient of <a href="cli.html#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send</code></a>.</td></tr>
 <tr><td><code>email</code></td><td>per language</td><td><code>subject</code> and <code>body</code> of the message <code>invgen send</code> prepares, with the placeholders <code>{number}</code>, <code>{total}</code>, <code>{due}</code>, <code>{client}</code>, <code>{from}</code>.</td></tr>
 </tbody>
 </table>
@@ -269,8 +277,8 @@ value does not show up on the invoice, check the spelling first.</p>
 <p>Paths (<code>from.logo</code>, <code>template</code>) may start with <code>~</code>; relative paths are resolved
 against the folder of the config file.</p>
 <h2 id="precedence"><a class="header" href="#precedence">Precedence</a></h2>
-<p>For each invoice, <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code> and <code>language</code> are taken from the first place that
-sets them:</p>
+<p>For each invoice, <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>locale</code> and <code>date_format</code> are
+taken from the first place that sets them (<code>number_format</code> merges key by key in the same order):</p>
 <ol>
 <li>the invoice front matter,</li>
 <li>the client entry,</li>
@@ -303,6 +311,41 @@ what your jurisdiction requires.</p>
 <p><code>invgen build</code> prints a warning (and the editor shows a notice after export) when an
 invoice charges no tax, has no <code>tax_note</code> and the client has <code>tax</code> lines. That is the
 typical cross-border B2B case that needs the reverse charge mention.</p>
+<h2 id="number-and-date-formatting"><a class="header" href="#number-and-date-formatting">Number and date formatting</a></h2>
+<p>Amounts and dates on the PDF follow the invoice language by default:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>language</code></th><th>Amount</th><th>Date</th></tr>
+</thead>
+<tbody>
+<tr><td><code>en</code></td><td><code>EUR 9,450.00</code></td><td><code>November 2, 2026</code></td></tr>
+<tr><td><code>de</code></td><td><code>9.450,00 €</code></td><td><code>2. November 2026</code></td></tr>
+<tr><td><code>es</code></td><td><code>9.450,00 €</code></td><td><code>2 de noviembre de 2026</code></td></tr>
+<tr><td><code>fr</code></td><td><code>9 450,00 €</code></td><td><code>2 novembre 2026</code></td></tr>
+<tr><td><code>it</code></td><td><code>9.450,00 €</code></td><td><code>2 novembre 2026</code></td></tr>
+<tr><td><code>pt</code></td><td><code>9 450,00 €</code></td><td><code>2 de novembro de 2026</code></td></tr>
+<tr><td><code>nl</code></td><td><code>€ 9.450,00</code></td><td><code>2 november 2026</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>Quantities and the tax rate use the same decimal separator (<code>7,5</code>, <code>21 %</code>). A
+<code>locale</code> with a region picks regional conventions: <code>de-CH</code> writes <code>CHF 9’450.00</code>,
+<code>en-US</code> writes <code>$9,450.00</code>, <code>en-GB</code> writes <code>2 November 2026</code>, <code>pt-BR</code> writes
+<code>R$ 9.450,00</code>. Common currency codes become symbols (€, $, £, ¥, …); <code>CHF</code> and
+unknown codes stay as written.</p>
+<p>For anything else, override single parts:</p>
+<pre><code class="language-yaml">locale: de-CH
+number_format:
+  thousands: "'"            # "" for none
+  decimal: "."
+  currency: code            # symbol or code
+  currency_position: before # before or after
+date_format: "%d.%m.%Y"
+</code></pre>
+<p>The command line (<code>invgen build</code>, <code>invgen list</code>) always prints <code>EUR 9,450.00</code>, whatever
+the locale. The full list of regions and date specifiers is in
+<a href="https://github.com/ldolberg/invgen/blob/main/docs/FORMAT.md#number-and-date-formatting">docs/FORMAT.md</a>.</p>
 <h2 id="invoice-numbers"><a class="header" href="#invoice-numbers">Invoice numbers</a></h2>
 <p>Numbers have the shape <code>&lt;prefix&gt;-&lt;year&gt;-&lt;seq&gt;</code>, for example <code>EINV-2026-14</code>. The
 sequence is global: it keeps counting across years (<code>EINV-2025-13</code> is followed by

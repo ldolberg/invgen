@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-edf2e956.js";
+            window.path_to_searchindex_js = "searchindex-7f7e3581.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-c6fff20e.js"></script>
@@ -198,6 +198,10 @@ tax_label: VAT                # optional: defaults to the translated "VAT" label
 tax_note: reverse_charge      # optional: legal mention under the totals (presets or free text)
 accent: "#111827"             # optional
 language: en                  # optional: en, es, de, fr, it, pt, nl
+locale: de-CH                 # optional: number and date format, default follows language
+date_format: "%d.%m.%Y"       # optional: strftime pattern for dates on the PDF
+number_format:                # optional: override single parts of the locale
+  thousands: "'"
 template: my-invoice.typ      # optional: custom typst template (docs/TEMPLATES.md)
 ---
 
@@ -323,8 +327,12 @@ with any other status removes it. Both change only those front matter lines.</li
 <li><code>language</code>: front matter, then the client, then the config, default <code>en</code>. Supported:
 <code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>it</code>, <code>pt</code>, <code>nl</code> (case-insensitive; a region suffix such as
 <code>fr-BE</code> is accepted and ignored). Any other value is an error listing these. The
-language changes every label on the invoice (headings, column names, status);
-dates and amounts keep their format.</li>
+language changes every label on the invoice (headings, column names, status)
+and, unless <code>locale</code> says otherwise, how dates and amounts are written on the PDF
+(see <a href="#number-and-date-formatting">Number and date formatting</a>).</li>
+<li><code>locale</code>, <code>number_format</code>, <code>date_format</code>: front matter, then the client, then the
+config. <code>number_format</code> merges field by field (a client <code>decimal</code> and a config
+<code>thousands</code> both apply).</li>
 <li><code>template</code>: front matter, then the config; none means the built-in template.</li>
 <li><code>tax_note</code>: front matter, then the client, then the config. A legal mention printed
 under the totals. Presets are translated into the invoice language:
@@ -427,6 +435,85 @@ to English. Use <code>config: labels:</code> in the front matter to change one i
 <li><strong>Templates</strong>: see <a href="TEMPLATES.html">TEMPLATES.md</a> for writing your own and the data
 it receives. <code>invgen template --export FILE.typ</code> writes the built-in one.</li>
 </ul>
+<h2 id="number-and-date-formatting"><a class="header" href="#number-and-date-formatting">Number and date formatting</a></h2>
+<p>Amounts, quantities, percentages and dates on the PDF follow the invoice
+<code>language</code>. The invoice markdown itself is always written the same way (the body
+rules above), and the CLI (<code>invgen build</code>, <code>invgen list</code>) always prints
+<code>EUR 9,450.00</code>.</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>language</code></th><th>Amount</th><th>Date</th><th>Quantity, rate</th></tr>
+</thead>
+<tbody>
+<tr><td><code>en</code></td><td><code>EUR 9,450.00</code></td><td><code>November 2, 2026</code></td><td><code>7.5</code>, <code>21%</code></td></tr>
+<tr><td><code>de</code></td><td><code>9.450,00 €</code></td><td><code>2. November 2026</code></td><td><code>7,5</code>, <code>21 %</code></td></tr>
+<tr><td><code>es</code></td><td><code>9.450,00 €</code></td><td><code>2 de noviembre de 2026</code></td><td><code>7,5</code>, <code>21 %</code></td></tr>
+<tr><td><code>fr</code></td><td><code>9 450,00 €</code></td><td><code>2 novembre 2026</code></td><td><code>7,5</code>, <code>21 %</code></td></tr>
+<tr><td><code>it</code></td><td><code>9.450,00 €</code></td><td><code>2 novembre 2026</code></td><td><code>7,5</code>, <code>21%</code></td></tr>
+<tr><td><code>pt</code></td><td><code>9 450,00 €</code></td><td><code>2 de novembro de 2026</code></td><td><code>7,5</code>, <code>21%</code></td></tr>
+<tr><td><code>nl</code></td><td><code>€ 9.450,00</code></td><td><code>2 november 2026</code></td><td><code>7,5</code>, <code>21%</code></td></tr>
+</tbody>
+</table>
+</div>
+<p>The spaces inside amounts are no-break spaces (French thousands use the narrow
+no-break space U+202F), so an amount never wraps. Month and weekday names come from
+built-in tables, never from the system locale. Quantities keep at most two decimals
+and no thousands separator.</p>
+<ul>
+<li>
+<p><strong><code>locale</code></strong>: a language code with an optional region, written <code>de-CH</code>, <code>de_CH</code> or
+<code>de-ch</code>. It changes only numbers and dates (labels follow <code>language</code>), so an English
+invoice can use Swiss formatting. The language part must be one of the supported
+languages; an unknown region uses that language’s defaults. Regions with their own
+conventions:</p>
+<div class="table-wrapper">
+<table>
+<thead>
+<tr><th><code>locale</code></th><th>Amount</th><th>Date</th></tr>
+</thead>
+<tbody>
+<tr><td><code>en-US</code>, <code>en-CA</code>, <code>en-PH</code></td><td><code>$9,450.00</code>, <code>€9,450.00</code>, <code>CHF 9,450.00</code></td><td><code>November 2, 2026</code></td></tr>
+<tr><td><code>en-GB</code>, <code>en-IE</code>, <code>en-AU</code>, <code>en-NZ</code>, <code>en-MT</code></td><td><code>£9,450.00</code></td><td><code>2 November 2026</code></td></tr>
+<tr><td><code>de-CH</code>, <code>de-LI</code>, <code>it-CH</code></td><td><code>CHF 9’450.00</code></td><td><code>2. November 2026</code></td></tr>
+<tr><td><code>de-AT</code></td><td><code>€ 9 450,00</code></td><td><code>2. Jänner 2026</code></td></tr>
+<tr><td><code>es-MX</code>, <code>es-US</code> (and other dollar countries)</td><td><code>$9,450.00</code></td><td><code>2 de noviembre de 2026</code></td></tr>
+<tr><td><code>fr-CA</code></td><td><code>9 450,00 $</code></td><td><code>2 novembre 2026</code></td></tr>
+<tr><td><code>pt-BR</code></td><td><code>R$ 9.450,00</code></td><td><code>2 de novembro de 2026</code></td></tr>
+<tr><td><code>nl-BE</code></td><td><code>9.450,00 €</code></td><td><code>2 november 2026</code></td></tr>
+</tbody>
+</table>
+</div>
+</li>
+<li>
+<p><strong>Currency symbols</strong>: common ISO codes are written as their symbol (<code>EUR</code> €, <code>USD</code> $,
+<code>GBP</code> £, <code>JPY</code> ¥, <code>CNY</code> CN¥, <code>INR</code> ₹, <code>BRL</code> R$, <code>CAD</code> CA$, <code>AUD</code> A$, <code>PLN</code> zł,
+<code>SEK</code>/<code>NOK</code>/<code>DKK</code> kr, …). <code>CHF</code> and any other code stay as written. A region uses
+<code>$</code> for its own dollar (<code>CAD</code> in <code>en-CA</code>) and <code>US$</code> for the US dollar there. A
+symbol before the amount touches it in English (<code>$9,450.00</code>) unless it ends in a
+letter (<code>CHF 9,450.00</code>); other locales put a space.</p>
+</li>
+<li>
+<p><strong><code>number_format</code></strong> overrides single parts of the locale:</p>
+<pre><code class="language-yaml">number_format:
+  thousands: "'"            # thousands separator; "" for none
+  decimal: "."              # decimal separator
+  currency: symbol          # symbol (€) or code (EUR)
+  currency_position: before # before or after the amount
+</code></pre>
+<p>An unknown key, an empty decimal separator, a separator with digits or signs, or the
+same separator for thousands and decimals is an error at the <code>number_format:</code> line.</p>
+</li>
+<li>
+<p><strong><code>date_format</code></strong>: a strftime pattern used for the invoice and due dates, e.g.
+<code>"%d.%m.%Y"</code> (<code>02.11.2026</code>), <code>"%Y-%m-%d"</code>, <code>"%-d %b %Y"</code> (<code>2 Nov 2026</code>) or
+<code>"%A, %-d. %B %Y"</code> (<code>Montag, 2. November 2026</code>). <code>%B</code>/<code>%b</code> (month) and <code>%A</code>/<code>%a</code>
+(weekday) are translated into the locale’s language; <code>%d</code>, <code>%-d</code>, <code>%e</code>, <code>%m</code>, <code>%-m</code>,
+<code>%Y</code>, <code>%y</code> and the other chrono date specifiers work as usual, and <code>%%</code> is a literal
+<code>%</code>. Time specifiers (<code>%H</code>…) and unknown ones are an error. Quote the pattern in
+YAML (it starts with <code>%</code>).</p>
+</li>
+</ul>
 <h2 id="payment-qr-code"><a class="header" href="#payment-qr-code">Payment QR code</a></h2>
 <p><code>payment.qr: true</code> (in the config, or per invoice with <code>payment:</code> / <code>config: payment:</code>
 in the front matter) prints an EPC QR code (“GiroCode”, EPC069-12) under the payment
@@ -481,6 +568,10 @@ tax_rate: 0
 due_days: 14
 tax_note: exempt                     # optional: default legal tax mention
 language: en                         # optional: en, es, de, fr, it, pt, nl
+locale: en-GB                        # optional: number and date format (default: language)
+date_format: "%-d %B %Y"             # optional: strftime pattern for dates on the PDF
+number_format:                       # optional: thousands, decimal, currency, currency_position
+  currency: symbol
 labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
@@ -509,6 +600,7 @@ clients:
     tax_rate: 0
     tax_note: reverse_charge   # optional: EU B2B services without VAT
     language: es       # optional: invoices for this client in Spanish
+    locale: es-MX      # optional: also number_format, date_format per client
     rate: 450          # default rate used by templates
     unit: days
     description: Senior Software Engineer
