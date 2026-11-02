@@ -233,10 +233,13 @@ fn split_front_matter(src: &str) -> Result<Document<'_>> {
     for line in lines {
         let fence = line.trim_end();
         if fence == "---" || fence == "..." {
+            let body_start = offset + line.len();
+            let body_line = src[..body_start].matches('\n').count() + 1;
+            check_second_front_matter(&src[body_start..], body_line)?;
             return Ok(Document {
                 yaml: &src[yaml_start..offset],
                 yaml_line: 2,
-                body_start: offset + line.len(),
+                body_start,
             });
         }
         offset += line.len();
@@ -245,6 +248,41 @@ fn split_front_matter(src: &str) -> Result<Document<'_>> {
         1,
         "front matter is not closed: add a `---` line after the YAML",
     ))
+}
+
+/// A second `---` block of `key: value` lines right after the front matter is
+/// almost always two front matters pasted together. Markdown would silently turn
+/// it into a rule plus a paragraph (or a heading), so reject it with a clear hint.
+fn check_second_front_matter(body: &str, first_line: usize) -> Result<()> {
+    let mut lines = body
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| !l.trim().is_empty());
+    let Some((fence_idx, fence)) = lines.next() else {
+        return Ok(());
+    };
+    if fence.trim_end() != "---" {
+        return Ok(());
+    }
+    let looks_like_key = |l: &str| {
+        let l = l.trim_start_matches("# ");
+        match l.split_once(':') {
+            Some((key, _)) => {
+                !key.is_empty()
+                    && key
+                        .chars()
+                        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+            }
+            None => false,
+        }
+    };
+    if lines.next().is_some_and(|(_, l)| looks_like_key(l)) {
+        return Err(ParseError::new(
+            first_line + fence_idx,
+            "a second front matter block starts here; move its keys into the `---` block at the top (one block per file)",
+        ));
+    }
+    Ok(())
 }
 
 struct FrontMatter<'a> {
@@ -918,6 +956,21 @@ mod tests {
             .unwrap_err();
         assert_eq!(err.line, 3);
         assert!(err.message.contains("config override"), "{}", err.message);
+    }
+
+    #[test]
+    fn second_front_matter_block_is_an_error() {
+        let src = "---\nclient: northwind\nconfig:\n  due_days: 30\n---\n\n---\nnumber: EINV-2026-24\ndate: 2026-11-02\n---\n\n- A: 1 @ 1\n";
+        let err = parse(src).unwrap_err();
+        assert_eq!(err.line, 7);
+        assert!(
+            err.message.contains("second front matter"),
+            "{}",
+            err.message
+        );
+        // a horizontal rule followed by prose is still fine
+        let ok = "---\nclient: northwind\n---\n\n---\n\nThanks for your business.\n\n- A: 1 @ 1\n";
+        assert!(parse(ok).is_ok());
     }
 
     #[test]
