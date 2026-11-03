@@ -87,8 +87,7 @@ clients:
 | `e_invoice` | none | E-invoices written by every build and editor export: `facturx`, `ubl` or `[facturx, ubl]`. See [E-invoices](recipes/e-invoices.md). |
 | `from` | empty | Sender: `name`, `address` (list of lines), `tax` (list of lines), `email`, `phone`, `logo` (SVG or PNG shown top-left; a missing file is an error). For e-invoices also `vat_id`, `legal_id`, `country`, `endpoint` (never printed). |
 | `payment` | empty | `holder`, `iban`, `bic`, `notes` (list of lines). |
-| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`; for e-invoices `vat_id`, `legal_id`, `country`, `endpoint`, `buyer_reference`) plus optional `currency`, `tax_rate`, `tax_note`, `language`, `locale`, `number_format`, `date_format`, `rate`, `unit`, `description`. The client's `email` is the recipient of [`invgen send`](cli.md#invgen-send-filenumber---dry-run---mark-sent). |
-| `email` | per language | `subject` and `body` of the message `invgen send` prepares, with the placeholders `{number}`, `{total}`, `{due}`, `{client}`, `{from}`. |
+| `clients` | none | Map of client key to a party (`name`, `address`, `tax`, `email`, `phone`; for e-invoices `vat_id`, `legal_id`, `country`, `endpoint`, `buyer_reference`) plus optional `currency`, `tax_rate`, `tax_note`, `language`, `locale`, `number_format`, `date_format`, `rate`, `unit`, `description`. |
 
 Unknown keys are ignored, so a typo in a key name does not raise an error. If a
 value does not show up on the invoice, check the spelling first.

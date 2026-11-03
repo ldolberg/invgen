@@ -70,7 +70,7 @@ The copy changes only what belongs to one invoice:
 - `number` is the next free number and `date` is today;
 - an explicit `due:` date is removed, so the due date is computed again from
   `due_days` (`due: false` and `due_days` are kept);
-- `status` becomes `pending`; `paid_on`, `sent_on` and the issued lock
+- `status` becomes `pending`; `paid_on` and the issued lock
   (`issued_hash`) are removed;
 - in the body, a month with its year (`October 2026`, `Oct 2026`) or a
   `YYYY-MM` period (`2026-10`) that refers to the source invoice's month or the
@@ -129,59 +129,6 @@ Ctrl+C. The config is read again on every rebuild, so config edits are picked
 up too. A failed build prints the error and keeps watching. `-o` works as in
 `build`. See the [watch mode recipe](recipes/watch.md). Unlike `build`, `watch`
 never locks an invoice (it warns about a changed issued invoice, though).
-
-## `invgen send FILE|NUMBER [--dry-run] [--mark-sent]`
-
-Emails an invoice through your own mail client. The argument is a markdown file,
-or an invoice number in the invoices directory (`EINV-2026-23`, or just `23`).
-
-1. If `<number>.pdf` is missing, or older than the invoice file or the config, it
-   is built first (exactly like `build`, so the invoice gets locked).
-2. The desktop mail client opens with the client's `email` as recipient, a subject
-   and a body, and the PDF attached. Review it there and press Send.
-
-| Option | Meaning |
-|---|---|
-| `--dry-run` | Print the message and the command that would be run; build and open nothing. |
-| `--mark-sent` | After the mail client opened, record `sent_on: <today>` in the front matter. |
-
-The subject and body come from the `email:` block of the config, with the
-placeholders `{number}`, `{total}`, `{due}`, `{client}` and `{from}`:
-
-```yaml
-email:
-  subject: "Invoice {number}"
-  body: |
-    Hello,
-
-    please find attached invoice {number} for {total}, due {due}.
-
-    Best regards,
-    {from}
-```
-
-Without that block, built-in texts in the invoice language are used (English,
-Spanish, German, French, Italian, Portuguese or Dutch).
-
-| Platform | How the mail client opens |
-|---|---|
-| Linux | `xdg-email` with recipient, subject, body and the PDF attached. Without `xdg-email`, a `mailto:` link (attach the printed PDF path by hand). |
-| macOS | Mail, through `osascript`, with everything filled in and the PDF attached. If that fails, a `mailto:` link and the printed PDF path. |
-| Windows | A `mailto:` link in the default mail client; attach the printed PDF path by hand (mailto cannot carry attachments). |
-
-invgen never sends mail itself and never stores SMTP credentials or passwords.
-
-```console
-$ invgen send 23 --dry-run
-To: billing@example.com
-Subject: Invoice EINV-2026-23
-Attachment: /home/alex/Documents/Invoices/EINV-2026-23.pdf
-
-Hello,
-...
-would run: xdg-email --utf8 --subject 'Invoice EINV-2026-23' ...
-fallback: xdg-open 'mailto:billing@example.com?subject=...'
-```
 
 ## `invgen list`
 
@@ -324,6 +271,4 @@ replaced with `--force`. The data a template receives is documented in
 
 `0` on success, `1` on any error (bad arguments, unreadable files, a parse error,
 a skipped file in `list`, problems found by `check`, a changed issued invoice
-with `build --strict`, a mail client that cannot be opened by `send`, an invalid
-config after
-`config --edit`).
+with `build --strict`, an invalid config after `config --edit`).

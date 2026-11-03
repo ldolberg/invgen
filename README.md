@@ -111,7 +111,6 @@ and sample invoices in [`examples/invoices/`](examples/invoices/).
 | `invgen check [--strict]` | Check the library: duplicate numbers, gaps, dates out of order, files that fail to parse, missing client or sender tax data, issued invoices that changed, credit notes whose `refers_to` is not an invoice in the library. Exit 1 on errors (or warnings with `--strict`) |
 | `invgen paid FILE\|NUMBER [--on DATE]` | Mark an invoice paid (`status: paid`, `paid_on`), editing only those lines |
 | `invgen status FILE\|NUMBER STATUS` | Set the status: `pending`, `paid`, `overdue` or `draft` |
-| `invgen send FILE\|NUMBER [--dry-run] [--mark-sent]` | Build the PDF if needed and open your mail client with the client's email, a subject and body from config templates, and the PDF attached (`xdg-email` on Linux; macOS Mail; Windows `mailto:` plus the PDF path). No SMTP, no stored credentials |
 | `invgen config [--edit]` | Show (or edit) the config file |
 | `invgen template --export [PATH] [--force]` | Write the built-in typst template (stdout without PATH) |
 
