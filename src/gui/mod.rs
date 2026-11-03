@@ -168,6 +168,14 @@ pub struct App {
     invoice: Option<Invoice>,
     /// Error of the *current* text: (1-based line or 0, message).
     error: Option<(usize, String)>,
+    /// Live check of the last checked text (errors and warnings).
+    diagnostics: Vec<crate::lint::Diagnostic>,
+    /// The problems list under the editor is expanded.
+    problems_open: bool,
+    /// The completion popup, while it is open.
+    popup: Option<view::Popup>,
+    /// Units, descriptions and numbers from the library, for completions.
+    vocabulary: library::Vocabulary,
 
     scanner: Scanner,
     library: Vec<Entry>,
@@ -251,6 +259,10 @@ impl App {
             rendered_ppt: 0.0,
             invoice: None,
             error: None,
+            diagnostics: Vec::new(),
+            problems_open: false,
+            popup: None,
+            vocabulary: library::Vocabulary::default(),
             library: Vec::new(),
             library_due: Some(Instant::now()),
             toasts,
@@ -341,6 +353,8 @@ impl App {
         self.text = text;
         self.saved_text = saved;
         self.error = None;
+        self.diagnostics.clear();
+        self.popup = None;
         // The parsed invoice belongs to the previous document; keeping it would
         // name saves and exports after the wrong invoice number.
         self.invoice = None;
@@ -865,10 +879,12 @@ impl App {
                     invoice,
                     pixels_per_pt,
                     pages,
+                    diagnostics,
                 } => {
                     self.in_flight = self.in_flight.saturating_sub(1);
                     if generation == self.generation {
                         self.error = None;
+                        self.diagnostics = diagnostics;
                     }
                     if generation == self.generation {
                         self.lock = crate::lock::state(&self.text, &invoice);
@@ -902,12 +918,16 @@ impl App {
                     generation,
                     line,
                     message,
+                    diagnostics,
                 } => {
                     if generation != 0 {
                         self.in_flight = self.in_flight.saturating_sub(1);
                     }
                     if generation == self.generation || generation == 0 {
                         self.error = Some((line, message));
+                    }
+                    if generation == self.generation {
+                        self.diagnostics = diagnostics;
                     }
                 }
                 Outcome::Skipped => {
@@ -962,6 +982,7 @@ impl App {
         }
 
         if let Some(entries) = self.scanner.poll() {
+            self.vocabulary = library::Vocabulary::from_entries(&entries);
             self.library = entries;
         }
 

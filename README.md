@@ -211,6 +211,12 @@ starting point. The data a template receives is documented and versioned in
 | Ctrl+E | Export PDF |
 | Ctrl+= / Ctrl+- | Zoom preview in / out |
 | Ctrl+0 | Fit the preview to the panel width |
+| Ctrl+Space | Show completions in the editor |
+| Up / Down, Enter or Tab, Esc | Pick, accept or dismiss a completion |
+
+The editor checks the invoice while you type (unknown keys, invalid values, bad
+item lines) and suggests keys, values, clients, units and descriptions; see
+[the editor guide](guide/src/editor.md).
 
 ## Fuzzing
 

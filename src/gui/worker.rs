@@ -3,6 +3,7 @@
 
 use crate::config::Config;
 use crate::einvoice;
+use crate::lint::{self, Diagnostic};
 use crate::model::{Invoice, file_stem};
 use crate::parse::{ParseError, parse_invoice};
 use crate::render::{Compiled, PageImage, Renderer};
@@ -33,12 +34,15 @@ pub enum Outcome {
         generation: u64,
         line: usize,
         message: String,
+        /// Everything the live check found (the failure included).
+        diagnostics: Vec<Diagnostic>,
     },
     Preview {
         generation: u64,
         invoice: Box<Invoice>,
         pixels_per_pt: f32,
         pages: Vec<PageImage>,
+        diagnostics: Vec<Diagnostic>,
     },
     /// The written PDF and the invoice it shows.
     Exported(Result<(PathBuf, Box<Invoice>), String>),
@@ -78,6 +82,15 @@ struct Cache {
     text: String,
     invoice: Invoice,
     compiled: Compiled,
+    diagnostics: Vec<Diagnostic>,
+}
+
+/// The live check for the editor; a bug in it must not stop the preview.
+fn check(cfg: &Config, text: &str, parsed: Result<&Invoice, &ParseError>) -> Vec<Diagnostic> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        lint::check_parsed(text, cfg, parsed)
+    }))
+    .unwrap_or_default()
 }
 
 fn compile(
@@ -124,6 +137,7 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
                 generation: 0,
                 line: 0,
                 message: format!("renderer: {e:#}"),
+                diagnostics: Vec::new(),
             });
             None
         }
@@ -201,17 +215,21 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
                     if !hit {
                         match compile(&renderer, &cfg, &text) {
                             Ok((invoice, compiled)) => {
+                                let diagnostics = check(&cfg, &text, Ok(&invoice));
                                 cache = Some(Cache {
                                     text,
                                     invoice,
                                     compiled,
+                                    diagnostics,
                                 })
                             }
                             Err(e) => {
+                                let diagnostics = check(&cfg, &text, Err(&e));
                                 let _ = tx.send(Outcome::Failed {
                                     generation,
                                     line: e.line,
                                     message: e.message,
+                                    diagnostics,
                                 });
                                 ctx.request_repaint();
                                 continue;
@@ -228,6 +246,7 @@ fn run(cfg: Arc<Config>, ctx: egui::Context, rx: Receiver<Job>, tx: Sender<Outco
                         invoice: Box::new(c.invoice.clone()),
                         pixels_per_pt,
                         pages,
+                        diagnostics: c.diagnostics.clone(),
                     });
                 }
             }

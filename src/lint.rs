@@ -320,8 +320,8 @@ fn distance(a: &str, b: &str) -> usize {
     for (i, row) in d.iter_mut().enumerate() {
         row[0] = i;
     }
-    for j in 0..=b.len() {
-        d[0][j] = j;
+    for (j, cell) in d[0].iter_mut().enumerate() {
+        *cell = j;
     }
     for i in 1..=a.len() {
         for j in 1..=b.len() {
@@ -546,6 +546,28 @@ mod tests {
     }
 
     #[test]
+    fn shipped_examples_are_clean() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+        let cfg = Config::load_from(&dir.join("config.yaml")).unwrap();
+        for entry in std::fs::read_dir(dir.join("invoices")).unwrap() {
+            let path = entry.unwrap().path();
+            let src = std::fs::read_to_string(&path).unwrap();
+            let d = check(&src, &cfg);
+            assert!(
+                d.iter().all(|d| d.severity == Severity::Warning),
+                "{}: {d:?}",
+                path.display()
+            );
+            // Only the known, intended warnings (none about keys or values).
+            assert!(
+                d.iter().all(|d| !d.message.contains("unknown key")),
+                "{}: {d:?}",
+                path.display()
+            );
+        }
+    }
+
+    #[test]
     fn cell_counts() {
         assert_eq!(cell_count("| a | b |"), 2);
         assert_eq!(cell_count("a | b"), 2);
@@ -558,7 +580,7 @@ mod tests {
         assert_eq!(distance("stauts", "status"), 1);
         assert_eq!(distance("kitten", "sitting"), 3);
         assert_eq!(distance("", "abc"), 3);
-        let msg = unknown_key(&[], "foo", &schema::INVOICE.to_vec());
+        let msg = unknown_key(&[], "foo", schema::INVOICE);
         assert!(!msg.contains("did you mean"), "{msg}");
     }
 }

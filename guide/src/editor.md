@@ -21,6 +21,10 @@ preview of the PDF on the right.
 | Ctrl+- | Zoom the preview out |
 | Ctrl+0 | Fit the preview to the panel width |
 | Ctrl+mouse wheel | Zoom the preview around the pointer |
+| Ctrl+Space | Show completions at the cursor |
+| Up / Down | Move through the completions |
+| Enter or Tab | Accept the selected completion |
+| Esc | Close the completions |
 
 The toolbar buttons do the same things and show their shortcut on hover.
 
@@ -36,6 +40,50 @@ Below the editor a status line reports the state of the preview:
 - **Preview up to date** when the text parses and renders.
 - **Line N: message** when there is a mistake. The line is highlighted in the
   editor; click the message to jump to it.
+
+### Live check
+
+A short moment after you stop typing, the editor checks the whole invoice and
+marks every problem it finds, not only the first one:
+
+- **Errors** (red) stop the invoice from rendering: an invalid `status`, a date
+  that is not `YYYY-MM-DD`, an unknown `kind`, `language` or `locale`, a
+  `client:` that is not in your config, an invalid `e_invoice` under `config:`,
+  duplicate keys, item rows or list entries without a valid quantity or rate, a
+  table without Description, Qty and Rate columns.
+- **Warnings** (yellow) do not stop it: unknown keys (they are ignored; a close
+  match is suggested, so `stauts` asks "did you mean `status`?"), config keys
+  written at the top level instead of under `config:`, a `tax_note` that looks
+  like a misspelled preset, a currency that is not a three-letter code, table
+  rows with more or fewer cells than the header, a due date before the invoice
+  date, a missing `tax_note` for a client with a VAT ID, and a payment QR code
+  that cannot be printed.
+
+Each line with a problem is underlined and tinted, gets a dot in the gutter and
+shows the first message at its end. Hover the line (or its number) to read all
+of its messages. A bar under the editor counts the problems; click it to open
+the list, and click an entry to jump to its line.
+
+### Completions
+
+The editor suggests what fits where the cursor is:
+
+- At the start of a line in the front matter: the keys you have not written yet
+  at that level (top level, or inside `from:`, `to:`, `payment:`,
+  `number_format:`, `config:` and a client under `config: clients:`).
+- After `client:` the client keys from your config; after `status:`, `kind:`,
+  `tax_note:`, `language:`, `locale:`, `currency:` and `e_invoice:` (under
+  `config:`) their possible values; after `date:`, `paid_on:` and `due:` today's
+  date (and for `due:` the date `due_days` from today); after `refers_to:` the
+  invoice numbers in your library.
+- In the body: item descriptions and units used in your library or set as client
+  defaults, in the Description and Unit columns of the table and in list items
+  (`- Description: 3 days @ 450`).
+
+The list opens by itself while you type a word, and right after `key: `. Typing
+narrows it down; Up and Down select, Enter or Tab accept, Esc closes it, and
+Ctrl+Space opens it on demand. When it is closed, Enter and Tab behave as usual.
+Accepting a key writes `key: ` and offers its values right away.
 
 The window title shows a dot in front of the file name while there are unsaved
 changes.

@@ -5,12 +5,17 @@ use super::theme::{self, Palette};
 use super::{
     App, Pending, ThemeChoice, ToastKind, clients, highlight, onboarding, open_external, tilde,
 };
+use crate::complete::{Completion, Context, Sources};
+use crate::lint::Severity;
 use crate::model::{Status, format_date, format_money, status_display};
+use eframe::egui::text::{CCursor, CCursorRange};
+use eframe::egui::text_edit::TextEditState;
 use eframe::egui::{
-    self, Align, Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Id, Layout,
-    Margin, Pos2, Rect, RichText, Sense, Shadow, Shape, Stroke, StrokeKind, UiBuilder, Vec2, pos2,
-    vec2,
+    self, Align, Align2, Color32, CornerRadius, CursorIcon, FontFamily, FontId, Frame, Id, Key,
+    Layout, Margin, Modifiers, Pos2, Rect, RichText, Sense, Shadow, Shape, Stroke, StrokeKind,
+    UiBuilder, Vec2, pos2, vec2,
 };
+use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
 const PAGE_GAP: f32 = 22.0;
@@ -712,11 +717,199 @@ fn work_area(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
 
 // ------------------------------------------------------------------ editor
 
+/// The completion popup while it is open.
+pub struct Popup {
+    /// Byte offset where the word being completed starts. When the cursor
+    /// leaves that word, the popup closes.
+    anchor: usize,
+    selected: usize,
+}
+
+/// Keys pressed while the popup is open, taken before the editor sees them.
+#[derive(Default)]
+struct PopupKeys {
+    down: usize,
+    up: usize,
+    accept: bool,
+    dismiss: bool,
+}
+
+impl PopupKeys {
+    fn take(ui: &egui::Ui) -> PopupKeys {
+        // Only unmodified presses, so Shift+Enter and friends reach the editor.
+        let count = |i: &mut egui::InputState, key: Key| {
+            let mut n = 0;
+            i.events.retain(|e| {
+                let hit = matches!(e, egui::Event::Key { key: k, pressed: true, modifiers, .. }
+                    if *k == key && modifiers.is_none());
+                n += usize::from(hit);
+                !hit
+            });
+            n
+        };
+        ui.input_mut(|i| PopupKeys {
+            down: count(i, Key::ArrowDown),
+            up: count(i, Key::ArrowUp),
+            accept: count(i, Key::Enter) + count(i, Key::Tab) > 0,
+            dismiss: count(i, Key::Escape) > 0,
+        })
+    }
+}
+
+const EDITOR_ID: &str = "invoice-editor";
+const POPUP_ID: &str = "invoice-completion";
+
 fn line_of_char(text: &str, char_idx: usize) -> usize {
     1 + text.chars().take(char_idx).filter(|c| *c == '\n').count()
 }
 
+fn char_index(text: &str, byte: usize) -> usize {
+    text[..byte.min(text.len())].chars().count()
+}
+
+fn byte_index(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map_or(text.len(), |(i, _)| i)
+}
+
+/// Byte offset of the start of 1-based `line`.
+fn line_start(text: &str, line: usize) -> usize {
+    if line <= 1 {
+        return 0;
+    }
+    text.match_indices('\n')
+        .nth(line - 2)
+        .map_or(text.len(), |(i, _)| i + 1)
+}
+
+fn severity_color(p: &Palette, s: Severity) -> Color32 {
+    match s {
+        Severity::Error => p.error,
+        Severity::Warning => p.warn,
+    }
+}
+
+/// Put the editor cursor at `char_idx` and focus the editor.
+fn place_cursor(ctx: &egui::Context, char_idx: usize) {
+    let id = Id::unique(EDITOR_ID);
+    let mut state = TextEditState::load(ctx, id).unwrap_or_default();
+    state
+        .cursor
+        .set_char_range(Some(CCursorRange::one(CCursor::new(char_idx))));
+    state.store(ctx, id);
+    ctx.memory_mut(|m| m.request_focus(id));
+}
+
+/// Should typing `typed` open the popup on its own (without Ctrl+Space)?
+fn auto_open(c: &Completion, text: &str, typed: char) -> bool {
+    let prefix = &text[c.range.clone()];
+    match c.context {
+        // `status: ` offers the values right after the space.
+        Context::Value { .. } if typed == ' ' => prefix.is_empty(),
+        // Free text: only once a word is under way.
+        Context::Description => !typed.is_whitespace() && prefix.chars().count() >= 2,
+        _ => crate::schema::is_ident_char(typed) && !prefix.is_empty(),
+    }
+}
+
 fn editor(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
+    let rect = ui.max_rect();
+    let n = app.diagnostics.len();
+    let list_h = match (n, app.problems_open) {
+        (0, _) => 0.0,
+        (_, false) => 24.0,
+        (n, true) => 30.0 + 19.0 * n.min(6) as f32,
+    };
+    let split = rect.bottom() - list_h;
+    ui.scope_builder(
+        UiBuilder::new().max_rect(Rect::from_min_max(rect.min, pos2(rect.right(), split))),
+        |ui| editor_text(app, ui, p),
+    );
+    if n > 0 {
+        ui.scope_builder(
+            UiBuilder::new().max_rect(Rect::from_min_max(pos2(rect.left(), split), rect.max)),
+            |ui| problems(app, ui, p),
+        );
+    }
+}
+
+/// Collapsible list of every problem the live check found.
+fn problems(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
+    let rect = ui.max_rect();
+    ui.painter().rect_filled(rect, 0.0, p.surface);
+    ui.painter()
+        .hline(rect.x_range(), rect.top(), Stroke::new(1.0, p.border));
+    let errors = app
+        .diagnostics
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    let warnings = app.diagnostics.len() - errors;
+    let plural = |n: usize, w: &str| format!("{n} {w}{}", if n == 1 { "" } else { "s" });
+    let summary = [(errors, "error"), (warnings, "warning")]
+        .iter()
+        .filter(|(n, _)| *n > 0)
+        .map(|(n, w)| plural(*n, w))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let arrow = if app.problems_open {
+        "\u{25BE}"
+    } else {
+        "\u{25B8}"
+    };
+    let color = if errors > 0 { p.error } else { p.warn };
+    Frame::new()
+        .inner_margin(Margin::symmetric(10, 4))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 3.0;
+            let resp = ui
+                .add(
+                    egui::Label::new(
+                        RichText::new(format!("{arrow} {summary}"))
+                            .size(11.5)
+                            .color(color),
+                    )
+                    .sense(Sense::click()),
+                )
+                .on_hover_text("Show or hide the list of problems");
+            if resp.clicked() {
+                app.problems_open = !app.problems_open;
+            }
+            if !app.problems_open {
+                return;
+            }
+            let mut jump = None;
+            egui::ScrollArea::vertical()
+                .id_salt("problems")
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    for d in &app.diagnostics {
+                        let font = FontId::proportional(11.5);
+                        let mut job = egui::text::LayoutJob::default();
+                        let fmt = |c: Color32| egui::TextFormat::simple(font.clone(), c);
+                        job.append("\u{25CF} ", 0.0, fmt(severity_color(p, d.severity)));
+                        let place = match d.line {
+                            0 => "File  ".to_string(),
+                            l => format!("Line {l}  "),
+                        };
+                        job.append(&place, 0.0, fmt(p.text_weak));
+                        job.append(&d.message, 0.0, fmt(p.text));
+                        let resp = ui
+                            .add(egui::Label::new(job).truncate().sense(Sense::click()))
+                            .on_hover_text(&d.message);
+                        if resp.clicked() && d.line > 0 {
+                            jump = Some(d.line);
+                        }
+                    }
+                });
+            if jump.is_some() {
+                app.goto_line = jump;
+            }
+        });
+}
+
+fn editor_text(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
     let rect = ui.max_rect();
     ui.painter().rect_filled(rect, 0.0, p.editor_bg);
     let font = FontId::monospace(13.5);
@@ -725,12 +918,23 @@ fn editor(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
     let digits = lines.to_string().len().max(2) as f32;
     let char_w = ui.fonts_mut(|f| f.glyph_width(&font, '0'));
     let gutter = digits * char_w + 28.0;
+    let id = Id::unique(EDITOR_ID);
 
-    let error_line = app.error.as_ref().map(|e| e.0).unwrap_or(0);
-    let error_msg = app.error.as_ref().map(|e| e.1.clone());
+    // Worst problem per line.
+    let mut marks: BTreeMap<usize, Severity> = BTreeMap::new();
+    for d in app.diagnostics.iter().filter(|d| d.line > 0) {
+        marks
+            .entry(d.line)
+            .and_modify(|s| *s = (*s).min(d.severity))
+            .or_insert(d.severity);
+    }
+    let underlines: BTreeMap<usize, Color32> = marks
+        .iter()
+        .map(|(&l, &s)| (l, severity_color(p, s).gamma_multiply(0.6)))
+        .collect();
     let pal = *p;
     let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-        let mut job = highlight::highlight(buf.as_str(), font.clone(), &pal, error_line);
+        let mut job = highlight::highlight(buf.as_str(), font.clone(), &pal, &underlines);
         job.wrap.max_width = wrap_width;
         ui.fonts_mut(|f| f.layout_job(job))
     };
@@ -741,14 +945,47 @@ fn editor(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
     if let Some(line) = app.goto_line.take() {
         let y = (line.saturating_sub(1) as f32 * row_h - rect.height() / 3.0).max(0.0);
         scroll = scroll.vertical_scroll_offset(y);
+        place_cursor(ui.ctx(), char_index(&app.text, line_start(&app.text, line)));
+        app.popup = None;
     }
 
     scroll.show(ui, |ui| {
         let bg_idx = ui.painter().add(Shape::Noop);
         let gutter_idx = ui.painter().add(Shape::Noop);
         let width = ui.available_width();
+
+        // Completion keys go to the popup, before the editor sees them.
+        let focused = ui.memory(|m| m.has_focus(id));
+        let open = focused && app.popup.is_some();
+        let manual = focused && ui.input_mut(|i| i.consume_key(Modifiers::CTRL, Key::Space));
+        let keys = if open {
+            PopupKeys::take(ui)
+        } else {
+            PopupKeys::default()
+        };
+        let typed = ui.input(|i| {
+            i.events.iter().rev().find_map(|e| match e {
+                egui::Event::Text(t) => t.chars().last(),
+                _ => None,
+            })
+        });
+        // Clicking an entry of the popup must not take the focus away.
+        let popup_layer = egui::LayerId::new(egui::Order::Foreground, Id::unique(POPUP_ID));
+        let on_popup = open
+            && ui
+                .ctx()
+                .pointer_interact_pos()
+                .and_then(|pos| ui.ctx().layer_id_at(pos))
+                == Some(popup_layer);
+        let surrender = ui.ctx().options(|o| o.input_options.surrender_focus_on);
+        if on_popup {
+            ui.ctx().options_mut(|o| {
+                o.input_options.surrender_focus_on = egui::SurrenderFocusOn::Never;
+            });
+        }
+
         let out = egui::TextEdit::multiline(&mut app.text)
-            .id_salt("editor")
+            .id(id)
             .font(font.clone())
             .frame(Frame::NONE.inner_margin(Margin {
                 left: gutter as i8,
@@ -758,14 +995,71 @@ fn editor(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
             }))
             .desired_width(width)
             .desired_rows(40)
-            .lock_focus(true)
+            .event_filter(egui::EventFilter {
+                tab: true,
+                horizontal_arrows: true,
+                vertical_arrows: true,
+                // Escape closes the popup instead of leaving the editor.
+                escape: open,
+            })
             .layouter(&mut layouter)
             .show(ui);
+        ui.ctx()
+            .options_mut(|o| o.input_options.surrender_focus_on = surrender);
+        let response = out.response.response.clone();
 
-        if out.response.response.changed() {
+        if response.changed() {
             app.text_changed(false);
         }
 
+        // ---- completion
+        let cursor = out
+            .cursor_range
+            .filter(|c| c.primary.index == c.secondary.index)
+            .map(|c| byte_index(&app.text, c.primary.index.0));
+        let sources = Sources {
+            cfg: &app.cfg,
+            today: chrono::Local::now().date_naive(),
+            units: &app.vocabulary.units,
+            descriptions: &app.vocabulary.descriptions,
+            numbers: &app.vocabulary.numbers,
+        };
+        let comp = cursor
+            .and_then(|c| crate::complete::complete(&app.text, c, &sources))
+            .filter(|c| !c.items.is_empty());
+        let mut accept = None;
+        match (&comp, app.popup.as_mut()) {
+            (Some(c), Some(pop)) if c.range.start == pop.anchor && !keys.dismiss => {
+                let n = c.items.len();
+                pop.selected = (pop.selected.min(n - 1) + keys.down + n - keys.up % n) % n;
+                if keys.accept {
+                    accept = Some(pop.selected);
+                }
+            }
+            _ => app.popup = None,
+        }
+        if !response.has_focus() {
+            app.popup = None;
+        }
+        if app.popup.is_none()
+            && !keys.dismiss
+            && response.has_focus()
+            && let Some(c) = &comp
+        {
+            let typed_here =
+                response.changed() && typed.is_some_and(|t| auto_open(c, &app.text, t));
+            if manual || typed_here {
+                app.popup = Some(Popup {
+                    anchor: c.range.start,
+                    selected: 0,
+                });
+                // One more frame, so the editor starts keeping Escape for
+                // the popup before the next key press.
+                ui.ctx().request_repaint();
+            }
+        }
+
+        // ---- problems: bands, gutter marks, inline messages
         let galley = &out.galley;
         let origin = out.galley_pos;
         let full_w = ui.min_rect().width().max(width);
@@ -773,37 +1067,37 @@ fn editor(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
         let cursor_line = out
             .cursor_range
             .map(|c| line_of_char(&app.text, c.primary.index.0));
-        let has_focus = out.response.response.has_focus();
+        let has_focus = response.has_focus();
 
         let mut bg = Vec::new();
         let mut nums = Vec::new();
         let mut line = 1usize;
         let mut starts_line = true;
-        let mut err_row_rect: Option<Rect> = None;
+        // First row of each line with a problem.
+        let mut marked_rows: Vec<(usize, Rect)> = Vec::new();
         // Each logical line spans one or more rows; band them all.
         for row in galley.rows.iter() {
             let r = row.rect().translate(origin.to_vec2());
             let band = Rect::from_min_max(pos2(left, r.top()), pos2(left + full_w, r.bottom()));
-            if line == error_line {
-                bg.push(Shape::rect_filled(band, 0.0, p.error_bg));
-                if err_row_rect.is_none() {
-                    err_row_rect = Some(r);
+            let mark = marks.get(&line).copied();
+            match mark {
+                Some(Severity::Error) => bg.push(Shape::rect_filled(band, 0.0, p.error_bg)),
+                Some(Severity::Warning) => {
+                    bg.push(Shape::rect_filled(band, 0.0, p.warn.gamma_multiply(0.08)))
                 }
-            } else if has_focus && Some(line) == cursor_line {
-                bg.push(Shape::rect_filled(
+                None if has_focus && Some(line) == cursor_line => bg.push(Shape::rect_filled(
                     band,
                     0.0,
                     p.text
                         .gamma_multiply(if ui.visuals().dark_mode { 0.04 } else { 0.05 }),
-                ));
+                )),
+                None => {}
             }
             if starts_line {
-                let color = if line == error_line {
-                    p.error
-                } else if Some(line) == cursor_line {
-                    p.text
-                } else {
-                    p.gutter
+                let color = match mark {
+                    Some(s) => severity_color(p, s),
+                    None if Some(line) == cursor_line => p.text,
+                    None => p.gutter,
                 };
                 let g =
                     ui.painter()
@@ -813,12 +1107,13 @@ fn editor(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                     r.top() + (row_h - g.size().y) / 2.0,
                 );
                 nums.push(Shape::galley(pos, g, color));
-                if line == error_line {
+                if let Some(s) = mark {
                     nums.push(Shape::circle_filled(
                         pos2(left + 8.0, r.center().y),
                         3.0,
-                        p.error,
+                        severity_color(p, s),
                     ));
+                    marked_rows.push((line, r));
                 }
             }
             starts_line = row.ends_with_newline;
@@ -838,19 +1133,148 @@ fn editor(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
         ui.painter().set(bg_idx, Shape::Vec(bg));
         ui.painter().set(gutter_idx, Shape::Vec(nums));
 
-        // Inline error message at the end of the failing line.
-        if let (Some(r), Some(msg)) = (err_row_rect, error_msg) {
-            let font = FontId::proportional(11.5);
-            let text = format!("\u{25CF} {msg}");
+        // Inline message at the end of each line with a problem.
+        for (line, r) in &marked_rows {
+            if !clip.intersects(*r) {
+                continue;
+            }
+            let mut on_line = app.diagnostics.iter().filter(|d| d.line == *line);
+            let Some(first) = on_line.next() else {
+                continue;
+            };
+            let more = on_line.count();
+            let color = severity_color(p, first.severity);
+            let text = match more {
+                0 => format!("\u{25CF} {}", first.message),
+                n => format!("\u{25CF} {} (+{n} more)", first.message),
+            };
             let x = r.right() + 28.0;
-            let room = ui.clip_rect().right() - 14.0 - x;
+            let room = clip.right() - 14.0 - x;
             if room > 60.0 {
-                let g = truncated(ui.painter(), &text, font, p.error.gamma_multiply(0.9), room);
+                let font = FontId::proportional(11.5);
+                let g = truncated(ui.painter(), &text, font, color.gamma_multiply(0.9), room);
                 let pos = pos2(x, r.center().y - g.size().y / 2.0);
-                ui.painter().galley(pos, g, p.error);
+                ui.painter().galley(pos, g, color);
             }
         }
+
+        // Hovering a line with problems (text or gutter) shows them all.
+        if let Some(pos) = response.hover_pos()
+            && app.popup.is_none()
+        {
+            let c = galley.cursor_from_pos(pos - origin);
+            let hovered = line_of_char(&app.text, c.index.0);
+            let on_line: Vec<_> = app
+                .diagnostics
+                .iter()
+                .filter(|d| d.line == hovered)
+                .collect();
+            if !on_line.is_empty() {
+                response.clone().on_hover_ui_at_pointer(|ui| {
+                    ui.set_max_width(420.0);
+                    for d in on_line {
+                        ui.label(
+                            RichText::new(format!("\u{25CF} {}", d.message))
+                                .color(severity_color(p, d.severity)),
+                        );
+                    }
+                });
+            }
+        }
+
+        // ---- the popup itself
+        if let (Some(c), Some(pop)) = (&comp, &app.popup)
+            && accept.is_none()
+        {
+            let at = galley.pos_from_cursor(CCursor::new(char_index(&app.text, c.range.start)));
+            let at = at.translate(origin.to_vec2()).left_bottom() + vec2(-6.0, 2.0);
+            if let Some(i) =
+                completion_popup(ui.ctx(), p, c, pop.selected, keys.down != keys.up, at)
+            {
+                accept = Some(i);
+            }
+        }
+        if let (Some(i), Some(c)) = (accept, &comp) {
+            let insert = c.items[i].insert.clone();
+            app.text.replace_range(c.range.clone(), &insert);
+            let end = c.range.start + insert.len();
+            place_cursor(ui.ctx(), char_index(&app.text, end));
+            app.popup = None;
+            app.text_changed(false);
+            // A key was just written: offer its values right away.
+            if matches!(c.context, Context::Key { .. }) && insert.ends_with(' ') {
+                let sources = Sources {
+                    cfg: &app.cfg,
+                    today: chrono::Local::now().date_naive(),
+                    units: &app.vocabulary.units,
+                    descriptions: &app.vocabulary.descriptions,
+                    numbers: &app.vocabulary.numbers,
+                };
+                if let Some(next) = crate::complete::complete(&app.text, end, &sources)
+                    && !next.items.is_empty()
+                {
+                    app.popup = Some(Popup {
+                        anchor: next.range.start,
+                        selected: 0,
+                    });
+                }
+            }
+            ui.ctx().request_repaint();
+        }
     });
+}
+
+/// Draw the completion list at `at`; the index of a clicked entry.
+fn completion_popup(
+    ctx: &egui::Context,
+    p: &Palette,
+    c: &Completion,
+    selected: usize,
+    moved: bool,
+    at: Pos2,
+) -> Option<usize> {
+    egui::Area::new(Id::unique(POPUP_ID))
+        .order(egui::Order::Foreground)
+        .fixed_pos(at)
+        .constrain(true)
+        .show(ctx, |ui| {
+            Frame::popup(ui.style())
+                .inner_margin(Margin::same(4))
+                .show(ui, |ui| {
+                    ui.set_min_width(240.0);
+                    ui.set_max_width(420.0);
+                    egui::ScrollArea::vertical()
+                        .max_height(8.0 * 22.0)
+                        .show(ui, |ui| {
+                            let mut clicked = None;
+                            for (i, item) in c.items.iter().enumerate() {
+                                let mut atoms = egui::Atoms::new(
+                                    RichText::new(&item.label).monospace().color(p.text_strong),
+                                );
+                                if !item.detail.is_empty() {
+                                    atoms.push_right(egui::Atom::grow());
+                                    atoms.push_right(
+                                        RichText::new(&item.detail).size(11.0).color(p.text_weak),
+                                    );
+                                }
+                                let resp = ui.add(
+                                    egui::Button::selectable(i == selected, atoms)
+                                        .min_size(vec2(ui.available_width(), 0.0)),
+                                );
+                                if i == selected && moved {
+                                    resp.scroll_to_me(None);
+                                }
+                                if resp.clicked() {
+                                    clicked = Some(i);
+                                }
+                            }
+                            clicked
+                        })
+                        .inner
+                })
+                .inner
+        })
+        .inner
 }
 
 // ------------------------------------------------------------------ preview
@@ -1173,4 +1597,48 @@ fn drop_overlay(ctx: &egui::Context, p: &Palette) {
         theme::strong(20.0),
         Color32::WHITE,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn offsets() {
+        let text = "a\nü\n\nlast";
+        assert_eq!(line_start(text, 1), 0);
+        assert_eq!(line_start(text, 2), 2);
+        assert_eq!(line_start(text, 4), 6);
+        assert_eq!(line_start(text, 9), text.len());
+        assert_eq!(char_index(text, 4), 3);
+        assert_eq!(byte_index(text, 3), 4);
+        assert_eq!(byte_index(text, 99), text.len());
+        assert_eq!(line_of_char(text, 3), 2);
+    }
+
+    #[test]
+    fn popup_opens_while_typing_words_not_spaces() {
+        let comp = |text: &str, start: usize, context: Context| Completion {
+            context,
+            range: start..text.len(),
+            items: Vec::new(),
+        };
+        let key = Context::Key { parents: vec![] };
+        let value = Context::Value {
+            parents: vec![],
+            key: "status".into(),
+        };
+        let text = "---\nst";
+        assert!(auto_open(&comp(text, 4, key.clone()), text, 't'));
+        let text = "---\nstatus: ";
+        assert!(auto_open(&comp(text, text.len(), value.clone()), text, ' '));
+        let text = "---\nstatus: p";
+        assert!(auto_open(&comp(text, text.len() - 1, value), text, 'p'));
+        let text = "- C";
+        assert!(!auto_open(&comp(text, 2, Context::Description), text, 'C'));
+        let text = "- Co";
+        assert!(auto_open(&comp(text, 2, Context::Description), text, 'o'));
+        let text = "| 3 ";
+        assert!(!auto_open(&comp(text, 4, Context::Unit), text, ' '));
+    }
 }
