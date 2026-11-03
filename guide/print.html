@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-829dc4aa.js";
+            window.path_to_searchindex_js = "searchindex-63b21617.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d8244cd5.js"></script>
@@ -421,8 +421,7 @@ clients:
 <tr><td><code>e_invoice</code></td><td>none</td><td>E-invoices written by every build and editor export: <code>facturx</code>, <code>ubl</code> or <code>[facturx, ubl]</code>. See <a href="#e-invoices-factur-x-and-peppol">E-invoices</a>.</td></tr>
 <tr><td><code>from</code></td><td>empty</td><td>Sender: <code>name</code>, <code>address</code> (list of lines), <code>tax</code> (list of lines), <code>email</code>, <code>phone</code>, <code>logo</code> (SVG or PNG shown top-left; a missing file is an error). For e-invoices also <code>vat_id</code>, <code>legal_id</code>, <code>country</code>, <code>endpoint</code> (never printed).</td></tr>
 <tr><td><code>payment</code></td><td>empty</td><td><code>holder</code>, <code>iban</code>, <code>bic</code>, <code>notes</code> (list of lines).</td></tr>
-<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>; for e-invoices <code>vat_id</code>, <code>legal_id</code>, <code>country</code>, <code>endpoint</code>, <code>buyer_reference</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>locale</code>, <code>number_format</code>, <code>date_format</code>, <code>rate</code>, <code>unit</code>, <code>description</code>. The client’s <code>email</code> is the recipient of <a href="#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send</code></a>.</td></tr>
-<tr><td><code>email</code></td><td>per language</td><td><code>subject</code> and <code>body</code> of the message <code>invgen send</code> prepares, with the placeholders <code>{number}</code>, <code>{total}</code>, <code>{due}</code>, <code>{client}</code>, <code>{from}</code>.</td></tr>
+<tr><td><code>clients</code></td><td>none</td><td>Map of client key to a party (<code>name</code>, <code>address</code>, <code>tax</code>, <code>email</code>, <code>phone</code>; for e-invoices <code>vat_id</code>, <code>legal_id</code>, <code>country</code>, <code>endpoint</code>, <code>buyer_reference</code>) plus optional <code>currency</code>, <code>tax_rate</code>, <code>tax_note</code>, <code>language</code>, <code>locale</code>, <code>number_format</code>, <code>date_format</code>, <code>rate</code>, <code>unit</code>, <code>description</code>.</td></tr>
 </tbody>
 </table>
 </div>
@@ -651,8 +650,8 @@ lives in the invoices dir would count the file itself (or its PDF) and skip a nu
 (front matter <code>due_days</code>, else config <code>due_days</code>). <code>due: false</code> (or <code>due: none</code>)
 leaves the due date off the invoice.</li>
 <li><code>status</code>: <code>pending</code> (default), <code>paid</code>, <code>overdue</code>, <code>draft</code>; case-insensitive.
-The PDF always shows the status as written. <code>invgen list</code> and the editor sidebar
-show an effective status instead: a <code>pending</code> invoice whose due date has passed
+The PDF always shows the status as written. <code>invgen list</code> shows an
+effective status instead: a <code>pending</code> invoice whose due date has passed
 shows as <code>overdue</code> with the days late (<code>overdue 12d</code>). Any other written status
 wins, and an invoice without a due date (<code>due: false</code>) is never overdue automatically.</li>
 <li><code>paid_on</code>: <code>YYYY-MM-DD</code>, the day the invoice was paid. Optional and not printed on
@@ -684,20 +683,18 @@ standard mentions, not legal advice: check what your jurisdiction requires.
 sets no <code>tax_note</code> and the client has <code>tax</code> lines (such as a VAT ID).</li>
 <li><code>issued_hash</code>: written by invgen when the invoice is first exported; see
 <a href="#issued-invoices-issued_hash">Issued invoices</a>. Do not write it by hand.</li>
-<li><code>sent_on</code>: <code>YYYY-MM-DD</code>, written by <code>invgen send --mark-sent</code>. Informational only.</li>
 <li><code>kind</code>: <code>invoice</code> (default) or <code>credit_note</code>; see <a href="#credit-notes">Credit notes</a>.
 <code>refers_to</code> and <code>refers_to_date</code> are only allowed on credit notes.</li>
 </ul>
 <h2 id="issued-invoices-issued_hash"><a class="header" href="#issued-invoices-issued_hash">Issued invoices (<code>issued_hash</code>)</a></h2>
 <p>Once an invoice is sent it should not change. When a non-draft invoice is exported
-to PDF for the first time (<code>invgen build</code>, <code>invgen send</code>, or Export PDF / Send in the
-editor), invgen adds one line to its front matter:</p>
+to PDF for the first time (<code>invgen build</code>, or Export PDF in the editor), invgen adds one line to its front matter:</p>
 <pre><code class="language-yaml">issued_hash: "3f2a9c4e1b7d6a05"
 </code></pre>
 <p>It is the first 16 hex digits of a SHA-256 over the fully resolved invoice: the JSON
 of the invoice model after config defaults, the client entry and every override are
 applied (sender, client, payment details, items, tax, dates, language, labels,
-template path…). The written <code>status</code>, <code>paid_on</code> and <code>sent_on</code> are left out, so
+template path…). The written <code>status</code> and <code>paid_on</code> are left out, so
 marking an invoice as paid does not break the lock. If <code>number:</code> or <code>date:</code> is
 missing it is written too, since both would otherwise be resolved again on every
 build. Only that line (and those keys) is added; the rest of the file stays byte for
@@ -717,46 +714,6 @@ sent document”), in red when the content changed. Its <strong>Unlock</strong> 
 updates the hash. <code>invgen watch</code> warns like <code>build</code> but never adds a lock, since it
 rebuilds while the invoice is still being written. To accept a change on purpose,
 delete the <code>issued_hash</code> line (or use Unlock) and export again.</p>
-<h2 id="sending-invgen-send"><a class="header" href="#sending-invgen-send">Sending (<code>invgen send</code>)</a></h2>
-<p><code>invgen send FILE|NUMBER</code> builds the PDF when it is missing or older than the invoice
-file or the config (which also locks the invoice, see above), then opens the desktop
-mail client with:</p>
-<ul>
-<li><strong>To</strong>: the client’s <code>email</code> (<code>clients.&lt;key&gt;.email</code>, or <code>to: email:</code> inline).
-Without one, the mail client asks for the recipient.</li>
-<li><strong>Subject</strong> and <strong>body</strong> from the config’s <code>email:</code> block, else built-in defaults in
-the invoice language (<code>en</code>, <code>es</code>, <code>de</code>, <code>fr</code>, <code>it</code>, <code>pt</code>, <code>nl</code>).</li>
-<li><strong>Attachment</strong>: the PDF (<code>&lt;number&gt;.pdf</code> next to the invoice file).</li>
-</ul>
-<p>Placeholders in <code>email.subject</code> and <code>email.body</code>: <code>{number}</code>, <code>{total}</code> (e.g.
-<code>EUR 9,450.00</code>), <code>{due}</code> (<code>YYYY-MM-DD</code>, empty without a due date), <code>{client}</code> (client
-name) and <code>{from}</code> (your name). Unknown <code>{...}</code> text is kept as written. The subject
-is one line; line breaks in it become spaces.</p>
-<pre><code class="language-yaml">email:
-  subject: "Invoice {number} from {from}"
-  body: |
-    Hello,
-
-    please find attached invoice {number} for {total}, due {due}.
-
-    Best regards,
-    {from}
-</code></pre>
-<p>How the mail client is opened:</p>
-<ul>
-<li><strong>Linux</strong> (and other freedesktop systems): <code>xdg-email --subject ... --body ... --attach &lt;pdf&gt; &lt;to&gt;</code>, which opens the default mail client with everything filled in.
-If <code>xdg-email</code> is missing, a <code>mailto:</code> link is opened with <code>xdg-open</code> and the PDF
-path is printed to attach by hand.</li>
-<li><strong>macOS</strong>: Mail, through <code>osascript</code>, with every field and the attachment. If that
-fails, a <code>mailto:</code> link is opened with <code>open</code> and the PDF path is printed.</li>
-<li><strong>Windows</strong>: a <code>mailto:</code> link (opened through <code>explorer.exe</code>); mailto cannot carry
-attachments, so the PDF path is printed.</li>
-</ul>
-<p>invgen never sends mail itself and never asks for or stores SMTP credentials: the
-message is only handed to your mail client, and you press Send there.
-<code>--dry-run</code> prints the message and the command instead of running anything;
-<code>--mark-sent</code> records <code>sent_on: &lt;today&gt;</code> in the front matter after the mail client
-opened. The editor’s <strong>Send</strong> button exports the PDF and then does the same.</p>
 <h2 id="credit-notes"><a class="header" href="#credit-notes">Credit notes</a></h2>
 <p>An issued invoice should not be edited or deleted; a correction goes through a
 credit note that references it and reverses all or part of it.</p>
@@ -798,7 +755,7 @@ front matter (the config <code>due_days</code> does not apply), so it is never o
 library.</li>
 <li><code>invgen new --credit EINV-2026-20</code> creates the next credit note in <code>invoices_dir</code>,
 prefilled from that invoice: its front matter is copied except <code>number</code>, <code>date</code>,
-<code>due</code>, <code>due_days</code>, <code>status</code>, <code>paid_on</code>, <code>issued_hash</code>, <code>sent_on</code>, <code>kind</code> and
+<code>due</code>, <code>due_days</code>, <code>status</code>, <code>paid_on</code>, <code>issued_hash</code>, <code>kind</code> and
 <code>refers_to*</code>, which are replaced or removed, and its items and notes are copied as
 written. Delete or reduce lines to credit only part of the invoice. Like an
 invoice, a credit note is locked (<code>issued_hash</code>) when it is first exported.</li>
@@ -1112,7 +1069,7 @@ and its path is printed.</p>
 <li><code>number</code> is the next free number and <code>date</code> is today;</li>
 <li>an explicit <code>due:</code> date is removed, so the due date is computed again from
 <code>due_days</code> (<code>due: false</code> and <code>due_days</code> are kept);</li>
-<li><code>status</code> becomes <code>pending</code>; <code>paid_on</code>, <code>sent_on</code> and the issued lock
+<li><code>status</code> becomes <code>pending</code>; <code>paid_on</code> and the issued lock
 (<code>issued_hash</code>) are removed;</li>
 <li>in the body, a month with its year (<code>October 2026</code>, <code>Oct 2026</code>) or a
 <code>YYYY-MM</code> period (<code>2026-10</code>) that refers to the source invoice’s month or the
@@ -1166,63 +1123,6 @@ Ctrl+C. The config is read again on every rebuild, so config edits are picked
 up too. A failed build prints the error and keeps watching. <code>-o</code> works as in
 <code>build</code>. See the <a href="#watch-mode-with-your-own-editor">watch mode recipe</a>. Unlike <code>build</code>, <code>watch</code>
 never locks an invoice (it warns about a changed issued invoice, though).</p>
-<h2 id="invgen-send-filenumber---dry-run---mark-sent"><a class="header" href="#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send FILE|NUMBER [--dry-run] [--mark-sent]</code></a></h2>
-<p>Emails an invoice through your own mail client. The argument is a markdown file,
-or an invoice number in the invoices directory (<code>EINV-2026-23</code>, or just <code>23</code>).</p>
-<ol>
-<li>If <code>&lt;number&gt;.pdf</code> is missing, or older than the invoice file or the config, it
-is built first (exactly like <code>build</code>, so the invoice gets locked).</li>
-<li>The desktop mail client opens with the client’s <code>email</code> as recipient, a subject
-and a body, and the PDF attached. Review it there and press Send.</li>
-</ol>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Option</th><th>Meaning</th></tr>
-</thead>
-<tbody>
-<tr><td><code>--dry-run</code></td><td>Print the message and the command that would be run; build and open nothing.</td></tr>
-<tr><td><code>--mark-sent</code></td><td>After the mail client opened, record <code>sent_on: &lt;today&gt;</code> in the front matter.</td></tr>
-</tbody>
-</table>
-</div>
-<p>The subject and body come from the <code>email:</code> block of the config, with the
-placeholders <code>{number}</code>, <code>{total}</code>, <code>{due}</code>, <code>{client}</code> and <code>{from}</code>:</p>
-<pre><code class="language-yaml">email:
-  subject: "Invoice {number}"
-  body: |
-    Hello,
-
-    please find attached invoice {number} for {total}, due {due}.
-
-    Best regards,
-    {from}
-</code></pre>
-<p>Without that block, built-in texts in the invoice language are used (English,
-Spanish, German, French, Italian, Portuguese or Dutch).</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Platform</th><th>How the mail client opens</th></tr>
-</thead>
-<tbody>
-<tr><td>Linux</td><td><code>xdg-email</code> with recipient, subject, body and the PDF attached. Without <code>xdg-email</code>, a <code>mailto:</code> link (attach the printed PDF path by hand).</td></tr>
-<tr><td>macOS</td><td>Mail, through <code>osascript</code>, with everything filled in and the PDF attached. If that fails, a <code>mailto:</code> link and the printed PDF path.</td></tr>
-<tr><td>Windows</td><td>A <code>mailto:</code> link in the default mail client; attach the printed PDF path by hand (mailto cannot carry attachments).</td></tr>
-</tbody>
-</table>
-</div>
-<p>invgen never sends mail itself and never stores SMTP credentials or passwords.</p>
-<pre><code class="language-console">$ invgen send 23 --dry-run
-To: billing@example.com
-Subject: Invoice EINV-2026-23
-Attachment: /home/alex/Documents/Invoices/EINV-2026-23.pdf
-
-Hello,
-...
-would run: xdg-email --utf8 --subject 'Invoice EINV-2026-23' ...
-fallback: xdg-open 'mailto:billing@example.com?subject=...'
-</code></pre>
 <h2 id="invgen-list"><a class="header" href="#invgen-list"><code>invgen list</code></a></h2>
 <pre><code class="language-text">invgen list [--year YYYY] [--client KEY|NAME] [--status STATUS]... [--unpaid] [--format table|csv|json]
 </code></pre>
@@ -1352,9 +1252,7 @@ replaced with <code>--force</code>. The data a template receives is documented i
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <p><code>0</code> on success, <code>1</code> on any error (bad arguments, unreadable files, a parse error,
 a skipped file in <code>list</code>, problems found by <code>check</code>, a changed issued invoice
-with <code>build --strict</code>, a mail client that cannot be opened by <code>send</code>, an invalid
-config after
-<code>config --edit</code>).</p>
+with <code>build --strict</code>, an invalid config after <code>config --edit</code>).</p>
 <div style="break-before: page; page-break-before: always;"></div>
 <h1 id="the-editor"><a class="header" href="#the-editor">The editor</a></h1>
 <p><code>invgen</code> (or <code>invgen edit FILE</code>) opens a native window with three parts: the
@@ -1415,9 +1313,6 @@ number in the current text. Right click the button, or press Shift+Ctrl+E, to
 pick another location.</li>
 <li><strong>Open PDF</strong> opens the last export in your PDF viewer. The notification shown
 after an export has an <strong>Open</strong> button too.</li>
-<li><strong>Send</strong> exports the PDF, then opens your mail client with the client’s email,
-a subject, a body and the PDF attached, like
-<a href="#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send</code></a>.</li>
 </ul>
 <p>Exporting a non-draft invoice for the first time locks it: an <code>issued_hash</code> line
 is added to its front matter (and to the file on disk). While an invoice is

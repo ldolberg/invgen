@@ -35,7 +35,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-829dc4aa.js";
+            window.path_to_searchindex_js = "searchindex-63b21617.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d8244cd5.js"></script>
@@ -256,7 +256,7 @@ and its path is printed.</p>
 <li><code>number</code> is the next free number and <code>date</code> is today;</li>
 <li>an explicit <code>due:</code> date is removed, so the due date is computed again from
 <code>due_days</code> (<code>due: false</code> and <code>due_days</code> are kept);</li>
-<li><code>status</code> becomes <code>pending</code>; <code>paid_on</code>, <code>sent_on</code> and the issued lock
+<li><code>status</code> becomes <code>pending</code>; <code>paid_on</code> and the issued lock
 (<code>issued_hash</code>) are removed;</li>
 <li>in the body, a month with its year (<code>October 2026</code>, <code>Oct 2026</code>) or a
 <code>YYYY-MM</code> period (<code>2026-10</code>) that refers to the source invoice’s month or the
@@ -310,63 +310,6 @@ Ctrl+C. The config is read again on every rebuild, so config edits are picked
 up too. A failed build prints the error and keeps watching. <code>-o</code> works as in
 <code>build</code>. See the <a href="recipes/watch.html">watch mode recipe</a>. Unlike <code>build</code>, <code>watch</code>
 never locks an invoice (it warns about a changed issued invoice, though).</p>
-<h2 id="invgen-send-filenumber---dry-run---mark-sent"><a class="header" href="#invgen-send-filenumber---dry-run---mark-sent"><code>invgen send FILE|NUMBER [--dry-run] [--mark-sent]</code></a></h2>
-<p>Emails an invoice through your own mail client. The argument is a markdown file,
-or an invoice number in the invoices directory (<code>EINV-2026-23</code>, or just <code>23</code>).</p>
-<ol>
-<li>If <code>&lt;number&gt;.pdf</code> is missing, or older than the invoice file or the config, it
-is built first (exactly like <code>build</code>, so the invoice gets locked).</li>
-<li>The desktop mail client opens with the client’s <code>email</code> as recipient, a subject
-and a body, and the PDF attached. Review it there and press Send.</li>
-</ol>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Option</th><th>Meaning</th></tr>
-</thead>
-<tbody>
-<tr><td><code>--dry-run</code></td><td>Print the message and the command that would be run; build and open nothing.</td></tr>
-<tr><td><code>--mark-sent</code></td><td>After the mail client opened, record <code>sent_on: &lt;today&gt;</code> in the front matter.</td></tr>
-</tbody>
-</table>
-</div>
-<p>The subject and body come from the <code>email:</code> block of the config, with the
-placeholders <code>{number}</code>, <code>{total}</code>, <code>{due}</code>, <code>{client}</code> and <code>{from}</code>:</p>
-<pre><code class="language-yaml">email:
-  subject: "Invoice {number}"
-  body: |
-    Hello,
-
-    please find attached invoice {number} for {total}, due {due}.
-
-    Best regards,
-    {from}
-</code></pre>
-<p>Without that block, built-in texts in the invoice language are used (English,
-Spanish, German, French, Italian, Portuguese or Dutch).</p>
-<div class="table-wrapper">
-<table>
-<thead>
-<tr><th>Platform</th><th>How the mail client opens</th></tr>
-</thead>
-<tbody>
-<tr><td>Linux</td><td><code>xdg-email</code> with recipient, subject, body and the PDF attached. Without <code>xdg-email</code>, a <code>mailto:</code> link (attach the printed PDF path by hand).</td></tr>
-<tr><td>macOS</td><td>Mail, through <code>osascript</code>, with everything filled in and the PDF attached. If that fails, a <code>mailto:</code> link and the printed PDF path.</td></tr>
-<tr><td>Windows</td><td>A <code>mailto:</code> link in the default mail client; attach the printed PDF path by hand (mailto cannot carry attachments).</td></tr>
-</tbody>
-</table>
-</div>
-<p>invgen never sends mail itself and never stores SMTP credentials or passwords.</p>
-<pre><code class="language-console">$ invgen send 23 --dry-run
-To: billing@example.com
-Subject: Invoice EINV-2026-23
-Attachment: /home/alex/Documents/Invoices/EINV-2026-23.pdf
-
-Hello,
-...
-would run: xdg-email --utf8 --subject 'Invoice EINV-2026-23' ...
-fallback: xdg-open 'mailto:billing@example.com?subject=...'
-</code></pre>
 <h2 id="invgen-list"><a class="header" href="#invgen-list"><code>invgen list</code></a></h2>
 <pre><code class="language-text">invgen list [--year YYYY] [--client KEY|NAME] [--status STATUS]... [--unpaid] [--format table|csv|json]
 </code></pre>
@@ -496,9 +439,7 @@ replaced with <code>--force</code>. The data a template receives is documented i
 <h2 id="exit-status"><a class="header" href="#exit-status">Exit status</a></h2>
 <p><code>0</code> on success, <code>1</code> on any error (bad arguments, unreadable files, a parse error,
 a skipped file in <code>list</code>, problems found by <code>check</code>, a changed issued invoice
-with <code>build --strict</code>, a mail client that cannot be opened by <code>send</code>, an invalid
-config after
-<code>config --edit</code>).</p>
+with <code>build --strict</code>, an invalid config after <code>config --edit</code>).</p>
 
                     </main>
 
