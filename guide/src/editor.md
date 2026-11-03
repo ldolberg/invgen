@@ -110,9 +110,6 @@ editor and preview to resize them; double click it to restore the default split.
   pick another location.
 - **Open PDF** opens the last export in your PDF viewer. The notification shown
   after an export has an **Open** button too.
-- **Send** exports the PDF, then opens your mail client with the client's email,
-  a subject, a body and the PDF attached, like
-  [`invgen send`](cli.md#invgen-send-filenumber---dry-run---mark-sent).
 
 Exporting a non-draft invoice for the first time locks it: an `issued_hash` line
 is added to its front matter (and to the file on disk). While an invoice is

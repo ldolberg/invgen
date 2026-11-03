@@ -217,7 +217,9 @@ fn key_items(
     let mut out = Vec::new();
     match keys_at(&parents) {
         Some(keys) => {
-            for k in keys.iter().filter(|k| !present.contains(&k.name)) {
+            let offered =
+                |k: &&schema::Key| !present.contains(&k.name) && !schema::LEGACY.contains(&k.name);
+            for k in keys.iter().filter(offered) {
                 let insert = if k.block {
                     format!("{}:\n{}", k.name, " ".repeat(indent + 2))
                 } else {
@@ -429,11 +431,12 @@ mod tests {
         assert_eq!(c.range, 17..18);
         let labels: Vec<_> = c.items.iter().map(|i| i.label.as_str()).collect();
         assert!(!labels.contains(&"status"), "{labels:?}");
-        assert!(labels.contains(&"sent_on"));
+        assert!(labels.contains(&"signature"));
+        assert!(!labels.contains(&"sent_on"), "legacy keys are not offered");
         assert_eq!(c.items[0].insert, "signature: ");
         // Empty prefix: every missing key.
         let all = f.labels("---\n§\n---\n");
-        assert_eq!(all.len(), schema::INVOICE.len());
+        assert_eq!(all.len(), schema::INVOICE.len() - schema::LEGACY.len());
     }
 
     #[test]

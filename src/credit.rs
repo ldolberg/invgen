@@ -29,7 +29,6 @@ const DROPPED_KEYS: &[&str] = &[
     "refers_to",
     "refers_to_date",
     crate::lock::KEY,
-    "sent_on",
 ];
 
 /// Whether front matter `kind` text means a credit note (`credit_note`,
@@ -69,7 +68,7 @@ pub fn invoice_date(cfg: &Config, number: &str) -> Option<NaiveDate> {
 /// currency, tax rate, inline parties, `config:`...) and body (items, notes)
 /// are kept as written; `kind`, `number`, `date`, `refers_to`,
 /// `refers_to_date` and `status: pending` are set, and `due`, `due_days`,
-/// `paid_on`, `issued_hash` and `sent_on` are removed.
+/// `paid_on` and `issued_hash` are removed.
 pub fn credit_note_markdown(src: &str, cfg: &Config, today: NaiveDate) -> Result<(String, String)> {
     let original = parse_invoice(src, cfg).map_err(|e| anyhow::anyhow!("{e}"))?;
     if original.kind == Kind::CreditNote {
@@ -141,7 +140,7 @@ mod tests {
     use super::*;
     use crate::model::Decimal;
 
-    const INVOICE: &str = "---\nnumber: EINV-2026-20   # explicit\ndate: 2026-10-01\ndue_days: 30\nstatus: paid\npaid_on: 2026-10-20\nissued_hash: 0123456789abcdef\nsent_on: 2026-10-02\ntax_rate: 21\nto:\n  name: Northwind Labs\n  address: [Madrid]\n---\n\n| Description | Qty | Unit | Rate |\n|---|---|---|---|\n| Consulting | 2 | days | 450 |\n\nThank you!\n";
+    const INVOICE: &str = "---\nnumber: EINV-2026-20   # explicit\ndate: 2026-10-01\ndue_days: 30\nstatus: paid\npaid_on: 2026-10-20\nissued_hash: 0123456789abcdef\ntax_rate: 21\nto:\n  name: Northwind Labs\n  address: [Madrid]\n---\n\n| Description | Qty | Unit | Rate |\n|---|---|---|---|\n| Consulting | 2 | days | 450 |\n\nThank you!\n";
 
     fn cfg_in(dir: &Path) -> Config {
         Config {
@@ -166,7 +165,7 @@ mod tests {
             ),
             "{md}"
         );
-        for key in ["due_days", "paid_on", "issued_hash", "sent_on"] {
+        for key in ["due_days", "paid_on", "issued_hash"] {
             assert!(!md.contains(key), "{key} in {md}");
         }
         let cn = parse_invoice(&md, &cfg).unwrap();

@@ -27,15 +27,6 @@ due_days: 14
 #   bill_to: Customer
 # template: my-invoice.typ           # custom typst template (`invgen template --export`)
 # e_invoice: facturx                 # e-invoices: facturx, ubl or [facturx, ubl]
-# email:                             # `invgen send` message; placeholders:
-#   subject: "Invoice {number}"      # {number} {total} {due} {client} {from}
-#   body: |
-#     Hello,
-#
-#     please find attached invoice {number} for {total}, due {due}.
-#
-#     Best regards,
-#     {from}
 
 from:
   name: Your Name
@@ -89,23 +80,6 @@ pub struct ClientConfig {
     pub format: FormatOptions,
 }
 
-/// Message templates for `invgen send`. Placeholders: `{number}`,
-/// `{total}`, `{due}`, `{client}`, `{from}` (see `send::expand`).
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-#[serde(default)]
-pub struct EmailConfig {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub subject: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub body: Option<String>,
-}
-
-impl EmailConfig {
-    pub fn is_empty(&self) -> bool {
-        self.subject.is_none() && self.body.is_none()
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -129,9 +103,6 @@ pub struct Config {
     /// Custom typst template replacing the built-in one.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub template: Option<PathBuf>,
-    /// Subject and body for `invgen send` (defaults per invoice language).
-    #[serde(skip_serializing_if = "EmailConfig::is_empty")]
-    pub email: EmailConfig,
     /// Default legal tax mention under the totals: a preset
     /// (`reverse_charge`, `exempt`, `outside_scope`) or free text.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -169,7 +140,6 @@ impl Default for Config {
             language: "en".into(),
             labels: BTreeMap::new(),
             template: None,
-            email: EmailConfig::default(),
             tax_note: None,
             e_invoice: Vec::new(),
             format: FormatOptions::default(),

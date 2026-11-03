@@ -7,7 +7,7 @@ use super::{
 };
 use crate::complete::{Completion, Context, Sources};
 use crate::lint::Severity;
-use crate::model::{Status, format_date, format_money, status_display};
+use crate::model::{Status, format_date, format_money};
 use eframe::egui::text::{CCursor, CCursorRange};
 use eframe::egui::text_edit::TextEditState;
 use eframe::egui::{
@@ -168,16 +168,6 @@ fn header(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                 .clicked()
             {
                 app.open_pdf();
-            }
-            if ui
-                .button("Send")
-                .on_hover_text(
-                    "Export, then open your mail client with the client's email, \
-                     a subject, a body and the PDF attached",
-                )
-                .clicked()
-            {
-                app.send();
             }
             ui.add_space(8.0);
             if ui
@@ -495,12 +485,8 @@ fn sidebar(app: &mut App, ui: &mut egui::Ui, p: &Palette) {
                 painter.galley(inner.left_top(), num, p.text_strong);
                 // Bottom row: client and status pill.
                 let (color, label) = status_colors(p, e.status);
-                let label = match (e.status, e.days_overdue) {
-                    (Some(s), Some(n)) => status_display(s, Some(n)),
-                    _ => label.to_string(),
-                };
                 let galley = painter.layout_no_wrap(
-                    label,
+                    label.to_string(),
                     FontId::new(9.5, FontFamily::Name(theme::STRONG.into())),
                     color,
                 );

@@ -18,9 +18,8 @@ pub struct Entry {
     pub number: String,
     pub client: String,
     pub total: String,
-    /// Effective status (pending past due shows as overdue).
+    /// Status as written in the file.
     pub status: Option<Status>,
-    pub days_overdue: Option<i64>,
     pub date: Option<chrono::NaiveDate>,
     pub paid_on: Option<chrono::NaiveDate>,
     /// (description, unit) of every line item, for editor completions.
@@ -63,8 +62,8 @@ impl Vocabulary {
 }
 
 /// Library entries for every invoice [`crate::library::discover`] finds in
-/// `dir`, newest first. Status is the effective one as of `today`.
-pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
+/// `dir`, newest first.
+pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
     let mut out = Vec::new();
     for path in crate::library::discover(dir) {
         let stem = path
@@ -80,8 +79,7 @@ pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
                 number: inv.number.clone(),
                 client: inv.to.name.clone(),
                 total: format_money(&inv.currency, inv.signed_total()),
-                status: Some(inv.effective_status(today)),
-                days_overdue: inv.days_overdue(today),
+                status: Some(inv.status),
                 date: Some(inv.date),
                 paid_on: inv.paid_on,
                 items: inv
@@ -96,7 +94,6 @@ pub fn scan(dir: &Path, cfg: &Config, today: NaiveDate) -> Vec<Entry> {
                 client: "could not parse".into(),
                 total: String::new(),
                 status: None,
-                days_overdue: None,
                 date: None,
                 paid_on: None,
                 items: Vec::new(),
@@ -215,8 +212,7 @@ impl Scanner {
                         job = newer;
                     }
                     let (dir, cfg) = job;
-                    let today = chrono::Local::now().date_naive();
-                    if out_tx.send(scan(&dir, &cfg, today)).is_err() {
+                    if out_tx.send(scan(&dir, &cfg)).is_err() {
                         return;
                     }
                     ctx.request_repaint();
@@ -319,7 +315,7 @@ mod tests {
     }
 
     #[test]
-    fn scan_includes_subfolders_and_effective_status() {
+    fn scan_includes_subfolders_with_written_status() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         write(root, "EINV-2026-01.md", "2026-10-21", "pending");
@@ -331,20 +327,19 @@ mod tests {
             invoices_dir: root.to_path_buf(),
             ..Config::default()
         };
-        let today = NaiveDate::from_ymd_opt(2026, 11, 2).unwrap();
-        let entries = scan(root, &cfg, today);
+        let entries = scan(root, &cfg);
         let got: Vec<_> = entries
             .iter()
-            .map(|e| (e.number.as_str(), e.status, e.days_overdue))
+            .map(|e| (e.number.as_str(), e.status))
             .collect();
         // Newest first; too-deep folders are not part of the library.
         assert_eq!(
             got,
             [
-                ("EINV-2026-04", Some(Status::Pending), None),
-                ("EINV-2026-03", Some(Status::Paid), None),
-                ("EINV-2026-02", Some(Status::Pending), None),
-                ("EINV-2026-01", Some(Status::Overdue), Some(12)),
+                ("EINV-2026-04", Some(Status::Pending)),
+                ("EINV-2026-03", Some(Status::Paid)),
+                ("EINV-2026-02", Some(Status::Pending)),
+                ("EINV-2026-01", Some(Status::Pending)),
             ]
         );
     }
@@ -357,7 +352,6 @@ mod tests {
             client: String::new(),
             total: String::new(),
             status: Some(Status::Paid),
-            days_overdue: None,
             date: None,
             paid_on: None,
             items: items

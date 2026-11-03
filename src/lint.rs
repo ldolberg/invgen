@@ -540,7 +540,7 @@ mod tests {
     #[test]
     fn free_form_levels_and_text_blocks_are_not_checked() {
         let src = format!(
-            "---\nconfig:\n  labels:\n    anything: x\n  email:\n    body: |\n      dear: you\n---\n{ITEMS}"
+            "---\nconfig:\n  labels:\n    anything: x\ntax_note: |\n  dear: you\n---\n{ITEMS}"
         );
         assert_eq!(check(&src, &cfg()), vec![]);
     }

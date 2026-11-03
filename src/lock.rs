@@ -21,7 +21,7 @@ const HASH_LEN: usize = 16;
 
 /// Model fields that do not count as content: payment tracking can change
 /// after the invoice is sent without changing what was sent.
-const IGNORED: &[&str] = &["status", "paid_on", KEY, "sent_on"];
+const IGNORED: &[&str] = &["status", "paid_on", KEY];
 
 /// Drop null, empty-string, empty-list and empty-map values recursively, so a
 /// field added to the model later (absent or empty on old invoices) does not
@@ -260,10 +260,7 @@ mod tests {
     fn payment_tracking_does_not_break_the_lock() {
         let c = cfg("Main St 1");
         let locked = record(SRC, &parse(SRC, &c)).unwrap().unwrap();
-        let paid = locked.replace(
-            "status: pending",
-            "status: paid\npaid_on: 2026-11-20\nsent_on: 2026-11-03",
-        );
+        let paid = locked.replace("status: pending", "status: paid\npaid_on: 2026-11-20");
         assert_eq!(state(&paid, &parse(&paid, &c)), State::Locked);
     }
 

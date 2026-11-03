@@ -10,7 +10,7 @@ standard EN 16931, in two syntaxes:
 
 Both flags can be combined. `e_invoice: facturx`, `e_invoice: ubl` or
 `e_invoice: [facturx, ubl]` in `config.yaml` turns them on for every `invgen build`,
-`invgen watch`, the rebuild done by `invgen send` and
+`invgen watch` and
 **Export PDF** in the editor; `invgen build --no-e-invoice` writes a plain PDF once.
 The setting is read from the config file: a `config:` block in an invoice does not
 change it.

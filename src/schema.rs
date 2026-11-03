@@ -56,7 +56,7 @@ pub const INVOICE: &[Key] = &[
     b("to", "inline client details"),
     b("payment", "override payment details"),
     b("config", "override any config key"),
-    k("sent_on", "date it was sent (invgen send)"),
+    k("sent_on", "date it was sent (older versions)"),
     k("issued_hash", "lock written on first export"),
 ];
 
@@ -108,7 +108,6 @@ pub const CONFIG: &[Key] = &[
     k("tax_note", "default legal tax mention"),
     k("e_invoice", "facturx, ubl or [facturx, ubl]"),
     b("labels", "override single labels"),
-    b("email", "invgen send message"),
     b("from", "your details"),
     b("payment", "payment details"),
     b("clients", "clients by key"),
@@ -128,15 +127,11 @@ pub const CLIENT_EXTRA: &[Key] = &[
     b("number_format", "thousands, decimal, currency..."),
 ];
 
-/// Fields of the config `email:` block.
-pub const EMAIL: &[Key] = &[
-    k("subject", "subject of the message"),
-    k("body", "body of the message"),
-];
-
 pub const STATUSES: &[&str] = &["pending", "paid", "overdue", "draft"];
 pub const KINDS: &[&str] = &["invoice", "credit_note"];
 pub const E_INVOICE: &[&str] = &["facturx", "ubl", "[facturx, ubl]"];
+/// Keys that are still accepted but no longer suggested.
+pub const LEGACY: &[&str] = &["sent_on"];
 /// Keys whose value is a `YYYY-MM-DD` date.
 pub const DATE_KEYS: &[&str] = &["date", "due", "paid_on", "refers_to_date", "sent_on"];
 
@@ -152,7 +147,6 @@ pub fn keys_at(parents: &[&str]) -> Option<Vec<Key>> {
         | ["config", "number_format"]
         | ["config", "clients", _, "number_format"] => NUMBER_FORMAT.to_vec(),
         ["config"] => CONFIG.to_vec(),
-        ["config", "email"] => EMAIL.to_vec(),
         ["config", "clients", _] => party_client(),
         _ => return None,
     })
