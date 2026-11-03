@@ -36,7 +36,7 @@
             const path_to_root = "";
             const default_light_theme = "light";
             const default_dark_theme = "navy";
-            window.path_to_searchindex_js = "searchindex-63b21617.js";
+            window.path_to_searchindex_js = "searchindex-c1fe97d5.js";
         </script>
         <!-- Start loading toc.js asap -->
         <script src="toc-d8244cd5.js"></script>
@@ -939,9 +939,6 @@ labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
 e_invoice: facturx                   # optional: facturx, ubl or [facturx, ubl] (E-INVOICING.md)
-email:                               # optional: `invgen send` message (see Sending)
-  subject: "Invoice {number}"
-  body: "Hello,\n\nplease find attached invoice {number} for {total}.\n\n{from}"
 from:
   name: Alex Morgan
   address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
@@ -959,7 +956,7 @@ clients:
     name: Northwind Labs SL
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
-    email: billing@example.com   # optional: recipient for `invgen send`
+    email: billing@example.com
     vat_id: ESB12345678          # optional: e-invoicing only (E-INVOICING.md)
     buyer_reference: NW-PO-2026  # optional: e-invoicing BT-10, required by Peppol
     currency: EUR      # optional per-client defaults
@@ -1277,6 +1274,10 @@ preview of the PDF on the right.</p>
 <tr><td>Ctrl+-</td><td>Zoom the preview out</td></tr>
 <tr><td>Ctrl+0</td><td>Fit the preview to the panel width</td></tr>
 <tr><td>Ctrl+mouse wheel</td><td>Zoom the preview around the pointer</td></tr>
+<tr><td>Ctrl+Space</td><td>Show completions at the cursor</td></tr>
+<tr><td>Up / Down</td><td>Move through the completions</td></tr>
+<tr><td>Enter or Tab</td><td>Accept the selected completion</td></tr>
+<tr><td>Esc</td><td>Close the completions</td></tr>
 </tbody>
 </table>
 </div>
@@ -1292,6 +1293,46 @@ your config.</p>
 <li><strong>Line N: message</strong> when there is a mistake. The line is highlighted in the
 editor; click the message to jump to it.</li>
 </ul>
+<h3 id="live-check"><a class="header" href="#live-check">Live check</a></h3>
+<p>A short moment after you stop typing, the editor checks the whole invoice and
+marks every problem it finds, not only the first one:</p>
+<ul>
+<li><strong>Errors</strong> (red) stop the invoice from rendering: an invalid <code>status</code>, a date
+that is not <code>YYYY-MM-DD</code>, an unknown <code>kind</code>, <code>language</code> or <code>locale</code>, a
+<code>client:</code> that is not in your config, an invalid <code>e_invoice</code> under <code>config:</code>,
+duplicate keys, item rows or list entries without a valid quantity or rate, a
+table without Description, Qty and Rate columns.</li>
+<li><strong>Warnings</strong> (yellow) do not stop it: unknown keys (they are ignored; a close
+match is suggested, so <code>stauts</code> asks “did you mean <code>status</code>?”), config keys
+written at the top level instead of under <code>config:</code>, a <code>tax_note</code> that looks
+like a misspelled preset, a currency that is not a three-letter code, table
+rows with more or fewer cells than the header, a due date before the invoice
+date, a missing <code>tax_note</code> for a client with a VAT ID, and a payment QR code
+that cannot be printed.</li>
+</ul>
+<p>Each line with a problem is underlined and tinted, gets a dot in the gutter and
+shows the first message at its end. Hover the line (or its number) to read all
+of its messages. A bar under the editor counts the problems; click it to open
+the list, and click an entry to jump to its line.</p>
+<h3 id="completions"><a class="header" href="#completions">Completions</a></h3>
+<p>The editor suggests what fits where the cursor is:</p>
+<ul>
+<li>At the start of a line in the front matter: the keys you have not written yet
+at that level (top level, or inside <code>from:</code>, <code>to:</code>, <code>payment:</code>,
+<code>number_format:</code>, <code>config:</code> and a client under <code>config: clients:</code>).</li>
+<li>After <code>client:</code> the client keys from your config; after <code>status:</code>, <code>kind:</code>,
+<code>tax_note:</code>, <code>language:</code>, <code>locale:</code>, <code>currency:</code> and <code>e_invoice:</code> (under
+<code>config:</code>) their possible values; after <code>date:</code>, <code>paid_on:</code> and <code>due:</code> today’s
+date (and for <code>due:</code> the date <code>due_days</code> from today); after <code>refers_to:</code> the
+invoice numbers in your library.</li>
+<li>In the body: item descriptions and units used in your library or set as client
+defaults, in the Description and Unit columns of the table and in list items
+(<code>- Description: 3 days @ 450</code>).</li>
+</ul>
+<p>The list opens by itself while you type a word, and right after <code>key: </code>. Typing
+narrows it down; Up and Down select, Enter or Tab accept, Esc closes it, and
+Ctrl+Space opens it on demand. When it is closed, Enter and Tab behave as usual.
+Accepting a key writes <code>key: </code> and offers its values right away.</p>
 <p>The window title shows a dot in front of the file name while there are unsaved
 changes.</p>
 <h2 id="live-preview"><a class="header" href="#live-preview">Live preview</a></h2>
