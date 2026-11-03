@@ -2,6 +2,8 @@
 //! tables, lists, numbers). Produces an egui `LayoutJob`.
 
 use super::theme::Palette;
+use std::collections::BTreeMap;
+
 use eframe::egui::{
     Color32, FontId, Stroke,
     text::{ByteIndex, LayoutJob, LayoutSection, TextFormat},
@@ -36,7 +38,8 @@ struct Builder<'a> {
     job: LayoutJob,
     font: FontId,
     p: &'a Palette,
-    error_line: bool,
+    /// Underline color of the current line (it has a problem).
+    underline: Option<Color32>,
 }
 
 impl Builder<'_> {
@@ -56,8 +59,8 @@ impl Builder<'_> {
             return;
         }
         let mut fmt = TextFormat::simple(self.font.clone(), color(self.p, k));
-        if self.error_line {
-            fmt.underline = Stroke::new(1.0, self.p.error.gamma_multiply(0.5));
+        if let Some(c) = self.underline {
+            fmt.underline = Stroke::new(1.0, c);
         }
         // Coding fonts turn "--", "->", "=>"... into ligatures, and egui cannot
         // switch them off. Shaping is per section, so give each run of
@@ -251,13 +254,19 @@ fn body_line(b: &mut Builder, line: &str) {
     }
 }
 
-/// Highlight the whole document. `error_line` is 1-based (0 = none).
-pub fn highlight(text: &str, font: FontId, p: &Palette, error_line: usize) -> LayoutJob {
+/// Highlight the whole document. `underlines` maps 1-based lines with a
+/// problem to the color of their underline.
+pub fn highlight(
+    text: &str,
+    font: FontId,
+    p: &Palette,
+    underlines: &BTreeMap<usize, Color32>,
+) -> LayoutJob {
     let mut b = Builder {
         job: LayoutJob::default(),
         font,
         p,
-        error_line: false,
+        underline: None,
     };
     // Front matter only when the very first line is `---`.
     let mut in_front = false;
@@ -268,7 +277,7 @@ pub fn highlight(text: &str, font: FontId, p: &Palette, error_line: usize) -> La
             Some(l) => (l, "\n"),
             None => (raw, ""),
         };
-        b.error_line = error_line == idx + 1;
+        b.underline = underlines.get(&(idx + 1)).copied();
         let is_delim = line.trim_end() == "---";
         if idx == 0 && is_delim {
             in_front = true;
@@ -302,8 +311,8 @@ pub fn highlight(text: &str, font: FontId, p: &Palette, error_line: usize) -> La
             body_line(&mut b, line);
         }
         if !nl.is_empty() {
-            // Keep the error background off the newline glyph itself.
-            b.error_line = false;
+            // Keep the underline off the newline glyph itself.
+            b.underline = None;
             b.push(nl, Kind::Text);
         }
     }

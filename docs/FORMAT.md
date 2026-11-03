@@ -423,9 +423,6 @@ labels:                              # optional: override single labels
   bill_to: Customer
 template: ~/invgen/my-invoice.typ    # optional: custom typst template
 e_invoice: facturx                   # optional: facturx, ubl or [facturx, ubl] (E-INVOICING.md)
-email:                               # optional: `invgen send` message (see Sending)
-  subject: "Invoice {number}"
-  body: "Hello,\n\nplease find attached invoice {number} for {total}.\n\n{from}"
 from:
   name: Alex Morgan
   address: [Rue de la Gare, Luxembourg, "1616", Luxembourg]
@@ -443,7 +440,7 @@ clients:
     name: Northwind Labs SL
     address: ["Calle Mayor, 12", Madrid, "28001", Spain]
     tax: ["Tax ID: B12345678"]
-    email: billing@example.com   # optional: recipient for `invgen send`
+    email: billing@example.com
     vat_id: ESB12345678          # optional: e-invoicing only (E-INVOICING.md)
     buyer_reference: NW-PO-2026  # optional: e-invoicing BT-10, required by Peppol
     currency: EUR      # optional per-client defaults

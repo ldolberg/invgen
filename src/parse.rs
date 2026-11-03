@@ -814,7 +814,7 @@ struct Body {
     notes: Vec<String>,
 }
 
-fn parse_body(body: &str, base: usize, lines: &LineIndex) -> Result<Body> {
+fn body_blocks(body: &str, base: usize, lines: &LineIndex) -> Result<Vec<Block>> {
     let opts = Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH;
     let parser = BodyParser {
         events: Parser::new_ext(body, opts).into_offset_iter().peekable(),
@@ -823,7 +823,69 @@ fn parse_body(body: &str, base: usize, lines: &LineIndex) -> Result<Body> {
         depth: 0,
         too_deep: None,
     };
-    let blocks = parser.blocks()?;
+    parser.blocks()
+}
+
+/// A list holds line items when the document has no table, the list is not
+/// under a `Notes` heading and its first entry has the item shape.
+fn is_items_list(entries: &[ListEntry], has_table: bool, in_notes: bool) -> bool {
+    !has_table
+        && !in_notes
+        && entries
+            .first()
+            .is_some_and(|e| split_list_item(first_line(&e.text)).is_some())
+}
+
+fn is_notes_heading(text: &str) -> bool {
+    text.trim()
+        .trim_end_matches(':')
+        .eq_ignore_ascii_case("notes")
+}
+
+/// Every problem with the line items (table header, rows, list entries), not
+/// only the first one like [`parse_invoice`]. The editor's live check uses it
+/// to underline all bad items at once. Front matter problems are not covered.
+pub fn item_problems(src: &str) -> Vec<ParseError> {
+    let src = src.strip_prefix('\u{feff}').unwrap_or(src);
+    let lines = LineIndex::new(src);
+    let Ok(doc) = split_front_matter(src) else {
+        return Vec::new();
+    };
+    let Ok(blocks) = body_blocks(&src[doc.body_start..], doc.body_start, &lines) else {
+        return Vec::new();
+    };
+    let has_table = blocks.iter().any(|b| matches!(b, Block::Table { .. }));
+    let mut out = Vec::new();
+    let mut in_notes = false;
+    let mut table_used = false;
+    for block in blocks {
+        match block {
+            Block::Heading(text) => in_notes = is_notes_heading(&text),
+            Block::Table {
+                header_line,
+                header,
+                rows,
+            } if !table_used => {
+                table_used = true;
+                match TableColumns::new(header_line, &header) {
+                    Ok(cols) => out.extend(
+                        rows.iter()
+                            .filter_map(|(line, cells)| cols.row(*line, cells).err()),
+                    ),
+                    Err(e) => out.push(e),
+                }
+            }
+            Block::List(entries) if is_items_list(&entries, has_table, in_notes) => {
+                out.extend(entries.iter().filter_map(|e| list_item(e).err()));
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+fn parse_body(body: &str, base: usize, lines: &LineIndex) -> Result<Body> {
+    let blocks = body_blocks(body, base, lines)?;
     let has_table = blocks.iter().any(|b| matches!(b, Block::Table { .. }));
 
     let mut out = Body::default();
@@ -838,10 +900,7 @@ fn parse_body(body: &str, base: usize, lines: &LineIndex) -> Result<Body> {
         let was_after_heading = std::mem::replace(&mut after_heading, false);
         match block {
             Block::Heading(text) => {
-                in_notes = text
-                    .trim()
-                    .trim_end_matches(':')
-                    .eq_ignore_ascii_case("notes");
+                in_notes = is_notes_heading(&text);
                 after_heading = !in_notes;
             }
             Block::Paragraph(text) => {
@@ -866,12 +925,7 @@ fn parse_body(body: &str, base: usize, lines: &LineIndex) -> Result<Body> {
                 }
             }
             Block::List(entries) => {
-                let is_items = !has_table
-                    && !in_notes
-                    && entries
-                        .first()
-                        .is_some_and(|e| split_list_item(first_line(&e.text)).is_some());
-                if is_items {
+                if is_items_list(&entries, has_table, in_notes) {
                     items_seen = true;
                     for entry in &entries {
                         out.items.push(list_item(entry)?);
@@ -930,67 +984,90 @@ fn classify_header(cell: &str) -> Option<(Column, Option<&'static str>)> {
     })
 }
 
+/// Column positions of an items table.
+struct TableColumns {
+    desc: usize,
+    qty: usize,
+    rate: usize,
+    unit: Option<usize>,
+    detail: Option<usize>,
+    tax: Option<usize>,
+    implied_unit: Option<&'static str>,
+}
+
+impl TableColumns {
+    fn new(header_line: usize, header: &[String]) -> Result<TableColumns> {
+        let find = |col: Column| {
+            header
+                .iter()
+                .position(|h| classify_header(h).is_some_and(|(c, _)| c == col))
+        };
+        let (Some(desc), Some(qty), Some(rate)) = (
+            find(Column::Description),
+            find(Column::Qty),
+            find(Column::Rate),
+        ) else {
+            return Err(ParseError::new(
+                header_line,
+                format!(
+                    "items table needs Description, Qty and Rate columns (found: {})",
+                    header.join(", ")
+                ),
+            ));
+        };
+        Ok(TableColumns {
+            desc,
+            qty,
+            rate,
+            unit: find(Column::Unit),
+            detail: find(Column::Detail),
+            tax: find(Column::Tax),
+            implied_unit: classify_header(&header[qty]).and_then(|(_, u)| u),
+        })
+    }
+
+    /// The item of one row; `None` for a fully empty row.
+    fn row(&self, line: usize, cells: &[String]) -> Result<Option<LineItem>> {
+        let cell = |i: usize| cells.get(i).map(|s| join_lines(s)).unwrap_or_default();
+        let opt_cell = |i: Option<usize>| i.map(cell).filter(|s| !s.is_empty());
+        if cells.iter().all(|c| c.trim().is_empty()) {
+            return Ok(None);
+        }
+        let description = cell(self.desc);
+        if description.is_empty() {
+            return Err(ParseError::new(line, "item has no description"));
+        }
+        let (quantity, qty_unit) =
+            parse_quantity(&cell(self.qty)).map_err(|m| ParseError::new(line, m))?;
+        let rate = parse_rate(&cell(self.rate)).map_err(|m| ParseError::new(line, m))?;
+        let unit = opt_cell(self.unit)
+            .or((!qty_unit.is_empty()).then_some(qty_unit))
+            .or(self.implied_unit.map(String::from))
+            .unwrap_or_default();
+        let tax_rate = opt_cell(self.tax)
+            .map(|t| parse_tax_rate(&t))
+            .transpose()
+            .map_err(|m| ParseError::new(line, m))?;
+        Ok(Some(LineItem {
+            description,
+            detail: opt_cell(self.detail),
+            quantity,
+            unit,
+            rate,
+            tax_rate,
+        }))
+    }
+}
+
 fn table_items(
     header_line: usize,
     header: &[String],
     rows: &[(usize, Vec<String>)],
 ) -> Result<Vec<LineItem>> {
-    let mut implied_unit = None;
-    let find = |col: Column| {
-        header
-            .iter()
-            .position(|h| classify_header(h).is_some_and(|(c, _)| c == col))
-    };
-    let (Some(desc), Some(qty), Some(rate)) = (
-        find(Column::Description),
-        find(Column::Qty),
-        find(Column::Rate),
-    ) else {
-        return Err(ParseError::new(
-            header_line,
-            format!(
-                "items table needs Description, Qty and Rate columns (found: {})",
-                header.join(", ")
-            ),
-        ));
-    };
-    if let Some((_, u)) = classify_header(&header[qty]) {
-        implied_unit = u;
-    }
-    let unit_col = find(Column::Unit);
-    let detail_col = find(Column::Detail);
-    let tax_col = find(Column::Tax);
-
+    let cols = TableColumns::new(header_line, header)?;
     let mut items = Vec::new();
     for (line, cells) in rows {
-        let cell = |i: usize| cells.get(i).map(|s| join_lines(s)).unwrap_or_default();
-        let opt_cell = |i: Option<usize>| i.map(cell).filter(|s| !s.is_empty());
-        if cells.iter().all(|c| c.trim().is_empty()) {
-            continue;
-        }
-        let description = cell(desc);
-        if description.is_empty() {
-            return Err(ParseError::new(*line, "item has no description"));
-        }
-        let (quantity, qty_unit) =
-            parse_quantity(&cell(qty)).map_err(|m| ParseError::new(*line, m))?;
-        let rate = parse_rate(&cell(rate)).map_err(|m| ParseError::new(*line, m))?;
-        let unit = opt_cell(unit_col)
-            .or((!qty_unit.is_empty()).then_some(qty_unit))
-            .or(implied_unit.map(String::from))
-            .unwrap_or_default();
-        let tax_rate = opt_cell(tax_col)
-            .map(|t| parse_tax_rate(&t))
-            .transpose()
-            .map_err(|m| ParseError::new(*line, m))?;
-        items.push(LineItem {
-            description,
-            detail: opt_cell(detail_col),
-            quantity,
-            unit,
-            rate,
-            tax_rate,
-        });
+        items.extend(cols.row(*line, cells)?);
     }
     Ok(items)
 }

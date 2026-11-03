@@ -22,6 +22,43 @@ pub struct Entry {
     pub status: Option<Status>,
     pub date: Option<chrono::NaiveDate>,
     pub paid_on: Option<chrono::NaiveDate>,
+    /// (description, unit) of every line item, for editor completions.
+    pub items: Vec<(String, String)>,
+}
+
+/// Words the editor offers as completions, most used first.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct Vocabulary {
+    pub units: Vec<String>,
+    pub descriptions: Vec<String>,
+    pub numbers: Vec<String>,
+}
+
+impl Vocabulary {
+    pub fn from_entries(entries: &[Entry]) -> Vocabulary {
+        fn ranked<'a>(words: impl Iterator<Item = &'a str>) -> Vec<String> {
+            let mut counts: Vec<(&str, usize)> = Vec::new();
+            for w in words.map(str::trim).filter(|w| !w.is_empty()) {
+                match counts.iter_mut().find(|(k, _)| *k == w) {
+                    Some((_, n)) => *n += 1,
+                    None => counts.push((w, 1)),
+                }
+            }
+            // Stable: ties keep library order (newest first).
+            counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+            counts.into_iter().map(|(w, _)| w.to_string()).collect()
+        }
+        let items = || entries.iter().flat_map(|e| e.items.iter());
+        Vocabulary {
+            units: ranked(items().map(|(_, u)| u.as_str())),
+            descriptions: ranked(items().map(|(d, _)| d.as_str())),
+            numbers: entries
+                .iter()
+                .filter(|e| e.status.is_some())
+                .map(|e| e.number.clone())
+                .collect(),
+        }
+    }
 }
 
 /// Library entries for every invoice [`crate::library::discover`] finds in
@@ -45,6 +82,11 @@ pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
                 status: Some(inv.status),
                 date: Some(inv.date),
                 paid_on: inv.paid_on,
+                items: inv
+                    .items
+                    .iter()
+                    .map(|it| (it.description.clone(), it.unit.clone()))
+                    .collect(),
             },
             Err(_) => Entry {
                 path: path.clone(),
@@ -54,6 +96,7 @@ pub fn scan(dir: &Path, cfg: &Config) -> Vec<Entry> {
                 status: None,
                 date: None,
                 paid_on: None,
+                items: Vec::new(),
             },
         };
         out.push(entry);
@@ -299,5 +342,29 @@ mod tests {
                 ("EINV-2026-01", Some(Status::Pending)),
             ]
         );
+    }
+
+    #[test]
+    fn vocabulary_ranks_by_use() {
+        let entry = |number: &str, items: &[(&str, &str)]| Entry {
+            path: PathBuf::from(format!("{number}.md")),
+            number: number.into(),
+            client: String::new(),
+            total: String::new(),
+            status: Some(Status::Paid),
+            date: None,
+            paid_on: None,
+            items: items
+                .iter()
+                .map(|(d, u)| (d.to_string(), u.to_string()))
+                .collect(),
+        };
+        let v = Vocabulary::from_entries(&[
+            entry("A-2", &[("Review", "hours"), ("Consulting", "days")]),
+            entry("A-1", &[("Consulting", "days"), ("Setup", "")]),
+        ]);
+        assert_eq!(v.units, ["days", "hours"]);
+        assert_eq!(v.descriptions, ["Consulting", "Review", "Setup"]);
+        assert_eq!(v.numbers, ["A-2", "A-1"]);
     }
 }
