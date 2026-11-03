@@ -123,8 +123,8 @@ about 7.9e28 is an error.
   (front matter `due_days`, else config `due_days`). `due: false` (or `due: none`)
   leaves the due date off the invoice.
 * `status`: `pending` (default), `paid`, `overdue`, `draft`; case-insensitive.
-  The PDF always shows the status as written. `invgen list` and the editor sidebar
-  show an effective status instead: a `pending` invoice whose due date has passed
+  The PDF always shows the status as written. `invgen list` shows an
+  effective status instead: a `pending` invoice whose due date has passed
   shows as `overdue` with the days late (`overdue 12d`). Any other written status
   wins, and an invoice without a due date (`due: false`) is never overdue automatically.
 * `paid_on`: `YYYY-MM-DD`, the day the invoice was paid. Optional and not printed on
@@ -156,15 +156,13 @@ about 7.9e28 is an error.
   sets no `tax_note` and the client has `tax` lines (such as a VAT ID).
 * `issued_hash`: written by invgen when the invoice is first exported; see
   [Issued invoices](#issued-invoices-issued_hash). Do not write it by hand.
-* `sent_on`: `YYYY-MM-DD`, written by `invgen send --mark-sent`. Informational only.
 * `kind`: `invoice` (default) or `credit_note`; see [Credit notes](#credit-notes).
   `refers_to` and `refers_to_date` are only allowed on credit notes.
 
 ## Issued invoices (`issued_hash`)
 
 Once an invoice is sent it should not change. When a non-draft invoice is exported
-to PDF for the first time (`invgen build`, `invgen send`, or Export PDF / Send in the
-editor), invgen adds one line to its front matter:
+to PDF for the first time (`invgen build`, or Export PDF in the editor), invgen adds one line to its front matter:
 
 ```yaml
 issued_hash: "3f2a9c4e1b7d6a05"
@@ -173,7 +171,7 @@ issued_hash: "3f2a9c4e1b7d6a05"
 It is the first 16 hex digits of a SHA-256 over the fully resolved invoice: the JSON
 of the invoice model after config defaults, the client entry and every override are
 applied (sender, client, payment details, items, tax, dates, language, labels,
-template path...). The written `status`, `paid_on` and `sent_on` are left out, so
+template path...). The written `status` and `paid_on` are left out, so
 marking an invoice as paid does not break the lock. If `number:` or `date:` is
 missing it is written too, since both would otherwise be resolved again on every
 build. Only that line (and those keys) is added; the rest of the file stays byte for
@@ -194,52 +192,6 @@ The first export is the one that counts: building a locked invoice again never
 updates the hash. `invgen watch` warns like `build` but never adds a lock, since it
 rebuilds while the invoice is still being written. To accept a change on purpose,
 delete the `issued_hash` line (or use Unlock) and export again.
-
-## Sending (`invgen send`)
-
-`invgen send FILE|NUMBER` builds the PDF when it is missing or older than the invoice
-file or the config (which also locks the invoice, see above), then opens the desktop
-mail client with:
-
-* **To**: the client's `email` (`clients.<key>.email`, or `to: email:` inline).
-  Without one, the mail client asks for the recipient.
-* **Subject** and **body** from the config's `email:` block, else built-in defaults in
-  the invoice language (`en`, `es`, `de`, `fr`, `it`, `pt`, `nl`).
-* **Attachment**: the PDF (`<number>.pdf` next to the invoice file).
-
-Placeholders in `email.subject` and `email.body`: `{number}`, `{total}` (e.g.
-`EUR 9,450.00`), `{due}` (`YYYY-MM-DD`, empty without a due date), `{client}` (client
-name) and `{from}` (your name). Unknown `{...}` text is kept as written. The subject
-is one line; line breaks in it become spaces.
-
-```yaml
-email:
-  subject: "Invoice {number} from {from}"
-  body: |
-    Hello,
-
-    please find attached invoice {number} for {total}, due {due}.
-
-    Best regards,
-    {from}
-```
-
-How the mail client is opened:
-
-* **Linux** (and other freedesktop systems): `xdg-email --subject ... --body ...
-  --attach <pdf> <to>`, which opens the default mail client with everything filled in.
-  If `xdg-email` is missing, a `mailto:` link is opened with `xdg-open` and the PDF
-  path is printed to attach by hand.
-* **macOS**: Mail, through `osascript`, with every field and the attachment. If that
-  fails, a `mailto:` link is opened with `open` and the PDF path is printed.
-* **Windows**: a `mailto:` link (opened through `explorer.exe`); mailto cannot carry
-  attachments, so the PDF path is printed.
-
-invgen never sends mail itself and never asks for or stores SMTP credentials: the
-message is only handed to your mail client, and you press Send there.
-`--dry-run` prints the message and the command instead of running anything;
-`--mark-sent` records `sent_on: <today>` in the front matter after the mail client
-opened. The editor's **Send** button exports the PDF and then does the same.
 
 ## Credit notes
 
@@ -285,7 +237,7 @@ client: northwind
   library.
 * `invgen new --credit EINV-2026-20` creates the next credit note in `invoices_dir`,
   prefilled from that invoice: its front matter is copied except `number`, `date`,
-  `due`, `due_days`, `status`, `paid_on`, `issued_hash`, `sent_on`, `kind` and
+  `due`, `due_days`, `status`, `paid_on`, `issued_hash`, `kind` and
   `refers_to*`, which are replaced or removed, and its items and notes are copied as
   written. Delete or reduce lines to credit only part of the invoice. Like an
   invoice, a credit note is locked (`issued_hash`) when it is first exported.

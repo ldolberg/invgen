@@ -6,11 +6,11 @@ use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Parser, Subcommand};
 use invgen::config::{Config, DEFAULT_CONFIG};
 use invgen::einvoice::{self, Format};
+use invgen::lock;
 use invgen::model::{Decimal, Invoice, Kind, Status, format_amount, format_money};
 use invgen::parse::parse_invoice;
 use invgen::render::Renderer;
 use invgen::report::{self, Aging, Filter, Library, Severity};
-use invgen::{lock, lookup, send};
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
@@ -138,21 +138,6 @@ enum Cmd {
             .map(|s| s.parse::<Status>().unwrap_or_default()))]
         status: Status,
     },
-    /// Email an invoice: build the PDF if it is missing or out of date, then
-    /// open the desktop mail client with the client's address, a subject,
-    /// a body and the PDF attached. invgen never sends mail itself.
-    Send {
-        /// Invoice markdown file, or an invoice number in the invoices
-        /// directory (`EINV-2026-07`, or just `7`).
-        #[arg(value_name = "FILE|NUMBER")]
-        invoice: String,
-        /// Print the message and the command instead of running anything.
-        #[arg(long)]
-        dry_run: bool,
-        /// Record `sent_on: <today>` in the invoice once the mail client opened.
-        #[arg(long)]
-        mark_sent: bool,
-    },
     /// Show the config path, creating a commented default if it is missing.
     Config {
         /// Open the config in $VISUAL / $EDITOR.
@@ -275,14 +260,6 @@ fn run(cli: Cli) -> Result<ExitCode> {
             let cfg = load_config(config_path.as_deref())?;
             cmd_set_status(&cfg, &invoice, status, None)
         }
-        Some(Cmd::Send {
-            invoice,
-            dry_run,
-            mark_sent,
-        }) => {
-            let cfg = load_config(config_path.as_deref())?;
-            cmd_send(&cfg, config_path.as_deref(), &invoice, dry_run, mark_sent)
-        }
         Some(Cmd::Config { edit }) => cmd_config(config_path.as_deref(), edit),
         Some(Cmd::Template { export, force }) => cmd_template(export.flatten().as_deref(), force),
     }
@@ -394,8 +371,7 @@ fn build(
         let loc = format!("{}:", file.display());
         eprintln!("{} {} {}", st.bold(&loc), st.yellow("warning:"), w);
     }
-    // Lock before writing the PDF, so the PDF stays newer than the markdown
-    // (`invgen send` rebuilds a PDF older than its markdown).
+    // Lock before writing the PDF, so the PDF stays newer than the markdown.
     let mut locked = false;
     if opts.lock
         && state == lock::State::Open
@@ -501,93 +477,6 @@ fn warn_changed(file: &Path, inv: &Invoice, recorded: &str, current: &str, error
             " (building anyway; --strict refuses)"
         }
     );
-}
-
-fn cmd_send(
-    cfg: &Config,
-    config_path: Option<&Path>,
-    arg: &str,
-    dry_run: bool,
-    mark_sent: bool,
-) -> Result<ExitCode> {
-    let file = lookup::resolve(cfg, arg)?;
-    let Some((src, inv)) = parse_file(cfg, &file)? else {
-        return Ok(ExitCode::FAILURE);
-    };
-    let pdf = default_output(&file, &inv);
-    let config_file = config_path
-        .map(Path::to_path_buf)
-        .unwrap_or_else(Config::path);
-    let stale = send::is_stale(&pdf, &file, Some(&config_file));
-    let st = Style::stdout();
-    let est = Style::stderr();
-
-    if stale && !dry_run {
-        let renderer = Renderer::new()?;
-        let opts = BuildOpts {
-            lock: true,
-            strict: false,
-        };
-        if build(cfg, &renderer, &file, None, None, opts)?.is_none() {
-            return Ok(ExitCode::FAILURE);
-        }
-    } else if let lock::State::Changed { recorded, current } = lock::state(&src, &inv) {
-        warn_changed(&file, &inv, &recorded, &current, false);
-    }
-
-    let msg = send::compose(&inv, &cfg.email, &pdf);
-    if msg.to.is_none() {
-        let who = if inv.to.name.is_empty() {
-            "the client"
-        } else {
-            inv.to.name.as_str()
-        };
-        eprintln!(
-            "{} {who} has no `email`; the mail client will ask for the recipient",
-            est.yellow("warning:"),
-        );
-    }
-    if dry_run {
-        if stale {
-            println!("would build {}", pdf.display());
-        }
-        println!("To: {}", msg.to.as_deref().unwrap_or(""));
-        println!("Subject: {}", msg.subject);
-        println!("Attachment: {}", msg.attachment.display());
-        println!();
-        println!("{}", msg.body);
-        println!();
-        for (i, l) in send::commands(&msg, send::Platform::current())
-            .iter()
-            .enumerate()
-        {
-            let what = if i == 0 { "would run" } else { "fallback" };
-            println!("{what}: {}", l.display());
-        }
-        return Ok(ExitCode::SUCCESS);
-    }
-
-    let used = send::launch(&msg)?;
-    println!(
-        "{} {} to {}",
-        st.green_bold("opened"),
-        st.bold(&inv.number),
-        msg.to.as_deref().unwrap_or("(no recipient)")
-    );
-    if !used.attaches {
-        println!(
-            "attach the PDF by hand: {}",
-            st.bold(&msg.attachment.display().to_string())
-        );
-    }
-    if mark_sent {
-        let src = std::fs::read_to_string(&file)
-            .with_context(|| format!("reading {}", file.display()))?;
-        let text = send::mark_sent(&src, Local::now().date_naive())?;
-        std::fs::write(&file, text).with_context(|| format!("writing {}", file.display()))?;
-        println!("{} sent_on in {}", st.dim("recorded"), file.display());
-    }
-    Ok(ExitCode::SUCCESS)
 }
 
 fn cmd_new(

@@ -14,7 +14,6 @@ pub mod model;
 pub mod parse;
 pub mod render;
 pub mod report;
-pub mod send;
 pub mod setup;
 
 pub use model::Invoice;
